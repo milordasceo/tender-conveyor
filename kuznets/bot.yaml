@@ -2,7 +2,7 @@
 # пути repo — от корня репозитория. пути box — абсолютные на боксе Grok Bot.
 schema_version: 1
 link: kuznets
-order_hint: первое звено конвейера; вход — API gosplan.info, выход — «Госзакупки/Сток» для Фатимы
+order_hint: 'первое звено конвейера; вход — API gosplan.info, выход — «Госзакупки/Сток»; оттуда загрузчик fatima/stock_docs_fetcher переносит папки в «Бланки», Фатима работает только из «Бланков»'
 docs:
   readme: kuznets/README.md                   # роль, работа по шагам, особые случаи
   install: kuznets/INSTALL_BY_BOT.md          # установка ботом, по шагам
@@ -12,7 +12,7 @@ docs:
 bot:
   name: Кузнец
   title: Сканер госзакупок — первое звено конвейера
-  description: Раз в сутки находит новые тендеры через gosplan.info и кладёт их папками в Google Drive «Госзакупки/Сток». Сопровождает сканер.
+  description: Находит новые тендеры через gosplan.info и кладёт их папками в Google Drive «Госзакупки/Сток». Сопровождает сканер и инструменты конвейера, в том числе загрузчик fatima/stock_docs_fetcher. Другим ботам даёт инструменты, их роли не описывает.
   prompt_file: kuznets/bot/prompt.md          # весь файл = системный промт, вставлять как есть
   placeholders:                               # заменить в prompt_file при создании
     "<id Смотрителя>": {bot: Смотритель, note: подставить id при создании}
@@ -23,7 +23,7 @@ teammates:                                    # только по имени. id
   - name: Смотритель
     relation: 'надзиратель; получает отчёты Кузнеца и строки «владельцу:»'
   - name: Фатима
-    relation: 'следующее звено; забирает папки из «Госзакупки/Сток»'
+    relation: 'следующее звено; работает только из «Госзакупки/Бланки». из «Сток» в «Бланки» папки переносит загрузчик fatima/stock_docs_fetcher, его сопровождает Кузнец. роль Фатимы описана в fatima/'
   - name: Скрипты и интеграции
     relation: 'исполнитель правок кода по заказу Кузнеца'
   # бота ещё нет — оставить имя в промте, id дописать после его создания
@@ -94,6 +94,8 @@ dependencies:
     install: curl https://rclone.org/install.sh | sudo bash
     check: rclone version
     remote_name: gosplan
+    remote_shared: 'remote gosplan: общий для всех ботов владельца на боксе; ~/.config/rclone/rclone.conf в репозиторий не класть'
+    oauth_app: 'проект gosplan-rclone, In production с 29.10.2026; refresh-токен без 7-дневного срока'
 
 config:
   file: /home/box/gosplan/scripts/config.novosibirsk.yaml
@@ -154,7 +156,7 @@ owner_steps:
     why: 'общий client_id rclone выводится из оборота; нужен свой OAuth-клиент'
     options:
       - id: existing
-        say: "Для Кузнеца нужен OAuth-клиент Google для rclone. Есть готовый (проект gosplan-rclone, в другом Google-аккаунте). Пришлите его client_id и client_secret как секреты. Учтите: приложение там в режиме Testing — вход истекает через 7 дней, пока его не опубликовать (OAuth consent screen → Publish app; homepage и privacy policy — https://github.com/milordasceo/tender-conveyor)."
+        say: "Для Кузнеца нужен OAuth-клиент Google для rclone. Есть готовый (проект gosplan-rclone, приложение опубликовано, In production). Пришлите его client_id и client_secret как секреты."
       - id: new
         say: "Для Кузнеца нужен OAuth-клиент Google для rclone. Создайте его в любом Google-аккаунте: console.cloud.google.com → новый проект → APIs & Services → Library → Google Drive API → Enable; OAuth consent screen → External, homepage и privacy policy: https://github.com/milordasceo/tender-conveyor → Publish app (In production); Credentials → Create credentials → OAuth client ID → Desktop app. Пришлите client_id и client_secret как секреты."
   google_cloud_terms:

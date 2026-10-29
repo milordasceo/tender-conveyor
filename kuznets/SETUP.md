@@ -58,7 +58,7 @@ python3 -m venv /home/box/gosplan/.venv
 
 Общий client_id rclone выводится из оборота. Нужен свой. Два варианта.
 
-**Готовый клиент.** Сейчас клиент есть в другом Google-аккаунте (проект gosplan-rclone). Владелец даёт его client_id и client_secret как секреты. Приложение там в режиме Testing: вход истекает через 7 дней. Чтобы не истекал — OAuth consent screen → Publish app (homepage и privacy policy — `https://github.com/milordasceo/tender-conveyor`).
+**Готовый клиент.** Сейчас клиент есть в другом Google-аккаунте (проект gosplan-rclone). Владелец даёт его client_id и client_secret как секреты. Приложение опубликовано 29.10.2026 (In production): вход не истекает через 7 дней. Если в консоли снова стоит Testing — OAuth consent screen → Publish app (homepage и privacy policy — `https://github.com/milordasceo/tender-conveyor`).
 
 **Новый клиент** в любом Google-аккаунте:
 
