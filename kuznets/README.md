@@ -200,7 +200,7 @@ cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_scanner.py -c config
 | этап | 1 (подача заявок) | `filters.stage` | `--stage` |
 | виды | запрос котировок, аукцион | `filters.purchase_types` / `filters.kinds` | `--kind` (`auction`, `zk`, `ok`, `zp`, `ep`) |
 | законы | 44-ФЗ, 223-ФЗ | `sources` / `filters.types` | `--types` |
-| окончание подачи | от 3 до 10 дней от момента запуска (`deadline_from: '+3d'`, `deadline_to: '+10d'`); меньше 3 дней — `expired`, больше 10 — `too_early`, вернётся позже | `filters.deadline_from`, `filters.deadline_to` | `--deadline-from`, `--deadline-to` |
+| окончание подачи | от 2 до 10 дней от момента запуска (`deadline_from: '+2d'`, `deadline_to: '+10d'`); меньше 2 дней — `expired`, больше 10 — `too_early`, вернётся позже | `filters.deadline_from`, `filters.deadline_to` | `--deadline-from`, `--deadline-to` |
 | дата публикации | `auto` | `filters.since` | `--since` |
 
 Приоритет: флаг CLI, затем конфиг, затем умолчание.
