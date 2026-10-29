@@ -1,4 +1,4 @@
-> Копия из `/home/box/gosplan/scripts` (бокс Кузнеца). На Grok Bot набор лежит в `/home/box/gosplan/scripts`, окружение — `/home/box/gosplan/.venv`. Пути ниже относительные: `scripts/` — эта папка, `..` — каталог уровнем выше (`/home/box/gosplan`). Установка с нуля — `../SETUP.md`.
+> Копия из `/home/box/gosplan/scripts` (бокс Кузнеца). На Grok Bot набор лежит в `/home/box/gosplan/scripts`, окружение — `/home/box/gosplan/.venv`. Пути ниже относительные: `scripts/` — эта папка, `..` — каталог уровнем выше (`/home/box/gosplan`). Установка с нуля — `../SETUP.md`. Добор очереди по одной закупке (`gosplan_drain.py`, `drain_start.sh`) — `../README.md`, раздел «Добор очереди».
 
 # Сканер закупок gosplan.info
 

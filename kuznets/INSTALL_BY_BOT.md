@@ -30,7 +30,7 @@
 
 - `oauth_client` — оба варианта на выбор;
 - `google_cloud_terms` — если выбран новый клиент;
-- `old_registry`;
+- `old_registry` — реестр уже в репозитории; нужно подтверждение, что прежний Кузнец остановлен;
 - `confirm_schedule` (подставить часовой пояс бокса из `date`).
 
 Пока ждём ответа — шаги 4–5.
@@ -40,12 +40,13 @@
 ```bash
 git clone https://github.com/milordasceo/tender-conveyor.git /tmp/tender-conveyor
 mkdir -p /home/box/gosplan/scripts
-cp /tmp/tender-conveyor/kuznets/scripts/{gosplan_scanner.py,gosplan_lib.py,config.novosibirsk.yaml,config.example.yaml,README.md} /home/box/gosplan/scripts/
+cp /tmp/tender-conveyor/kuznets/scripts/{gosplan_scanner.py,gosplan_lib.py,gosplan_drain.py,drain_start.sh,config.novosibirsk.yaml,config.example.yaml,README.md} /home/box/gosplan/scripts/
+chmod 755 /home/box/gosplan/scripts/drain_start.sh
 ```
 
-Соответствие путей — `deploy`. `/home/box/gosplan` уже есть — не затирать `scripts/state` и `.env`.
+Соответствие путей — `deploy`. `/home/box/gosplan` уже есть — не затирать `scripts/state` и `.env`. Реестр кладётся на шаге 7.
 
-КТ: `ls /home/box/gosplan/scripts` показывает 5 файлов.
+КТ: `ls /home/box/gosplan/scripts` показывает 7 файлов.
 
 ## 5. Зависимости
 
@@ -73,7 +74,14 @@ cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_scanner.py -c config
 
 ## 7. Реестр выгрузки
 
-Реестр с репозиторием не едет. Он лежит на боксе: `/home/box/gosplan/scripts/state/export_00cd167b09dc.json` (имя = sha1 строки `gosplan:Госзакупки/Сток`, первые 12 знаков).
+Реестр сканера на боксе: `/home/box/gosplan/scripts/state/export_00cd167b09dc.json` (имя = sha1 строки `gosplan:Госзакупки/Сток`, первые 12 знаков). Перенесённая копия лежит в репозитории: `kuznets/state/` (вариант 0 ниже). Файл на боксе уже есть — не затирать.
+
+Команда для варианта 0:
+
+```bash
+mkdir -p /home/box/gosplan/scripts/state
+test -e /home/box/gosplan/scripts/state/export_00cd167b09dc.json || cp /tmp/tender-conveyor/kuznets/state/export_00cd167b09dc.json /home/box/gosplan/scripts/state/
+```
 
 Пустой реестр = первый прогон берёт все подходящие тендеры. Что это значит для того же «Сток»:
 
@@ -82,7 +90,7 @@ cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_scanner.py -c config
 
 Других способов засеять реестр в сканере нет. Варианты, по порядку предпочтения:
 
-0. **Основной путь.** В репозитории лежит перенесённый реестр: `kuznets/state/export_*.json` (см. `kuznets/state/README.md`). Скопировать его в `/home/box/gosplan/scripts/state/` с тем же именем до первого запуска. Тогда первый прогон догрузит очередь и не будет дублей. Остальные варианты ниже нужны только если этого файла нет или он устарел.
+0. **Основной путь.** В репозитории лежит перенесённый реестр: `kuznets/state/export_*.json` (см. `kuznets/state/README.md`). Скопировать его в `/home/box/gosplan/scripts/state/` с тем же именем до первого запуска. Тогда добор (шаг 9) выгрузит очередь, дублей не будет. Остальные варианты ниже нужны только если этого файла нет или он устарел.
 
 1. Владелец прислал старый реестр → положить файл в `/home/box/gosplan/scripts/state/` с тем же именем. Содержит только публичные номера тендеров.
 2. Старого реестра нет, но прежний Кузнец выгружал в этот «Сток» → собрать реестр из номеров. Номера — имена папок в «Сток» и в папках, куда тендеры унесли следующие звенья (где они — спросить владельца или Смотрителя; не угадывать). Список номеров по одному в строке — в `/tmp/known_numbers.txt`, затем:
@@ -111,31 +119,43 @@ cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_scanner.py -c config
 
 ## 8. Проверка
 
-Команды и ожидания — `verification`. Коротко:
+Команды и ожидания — `verification` в `bot.yaml`. Идея: копия боевого реестра с 2 закупками в очереди во временном `GOSPLAN_STATE_DIR`, тестовый приёмник `gosplan:Госзакупки/_проверка_кузнеца`. Поиска нет, выгружаются ровно 2 папки. Боевой реестр и «Сток» не трогаются.
+
+1. `md5sum` боевого реестра — запомнить.
+2. `--dry-run` во временном state.
+3. Тестовый реестр: `pending[:2]`, `remote` = тестовый, файл `/tmp/kuznets_check/export_0ad93d739bc6.json`.
+4. `gosplan_scanner.py ... --remote 'gosplan:Госзакупки/_проверка_кузнеца' --limit 1` → в stderr «pending не пуст — поиск пропущен», `выгружено: 1`, код 3.
+5. `gosplan_drain.py run` с `KUZNETS_REMOTE` тестовым и `DRAIN_INTERVAL=5` в переднем плане → выгружает последнюю, код 0.
+6. `gosplan_drain.py status` → `pending: 0`, `state: done`.
+7. `rclone lsf` тестовой папки → 2 папки номеров.
+8. Уборка: `rclone purge 'gosplan:Госзакупки/_проверка_кузнеца'`, `rm -rf /tmp/kuznets_check`, `md5sum` боевого реестра — та же сумма.
+
+КТ: всё по `expect`; папка проверки удалена; боевой реестр не изменился.
+
+## 9. Запуск добора
+
+`post_install` в `bot.yaml`:
 
 ```bash
 cd /home/box/gosplan/scripts
-GOSPLAN_STATE_DIR=/tmp/kuznets_check ../.venv/bin/python gosplan_scanner.py -c config.novosibirsk.yaml \
-  --remote 'gosplan:Госзакупки/_проверка_кузнеца' --limit 1; echo "exit=$?"
-rclone lsf 'gosplan:Госзакупки/_проверка_кузнеца' --dirs-only
-rclone lsf "gosplan:Госзакупки/_проверка_кузнеца/<номер>"
-rclone purge 'gosplan:Госзакупки/_проверка_кузнеца'
-rm -rf /tmp/kuznets_check
+../.venv/bin/python gosplan_drain.py status     # pending > 0
+./drain_start.sh                                # «добор запущен, pid N, pending N»
+sleep 150; ../.venv/bin/python gosplan_drain.py status
 ```
 
-`GOSPLAN_STATE_DIR` обязателен: проверка не должна писать в боевой реестр. Прогон может идти до 30 минут (лимит API, 429).
+Добор — отсоединённый фоновый процесс. Выгружает по одной закупке примерно раз в 30 с. Второй копии не будет: блокировка `state/kuznets_run.lock`. systemd и cron на боксе нет: если процесс умрёт (перезагрузка бокса), его поднимет почасовая рутина.
 
-КТ: `выгружено: 1`; код 3 или 0; в папке проверки одна папка с `tender.md` и `tender.json`; папка проверки удалена; боевой реестр не изменился.
+КТ: `exported_last_hour` растёт, `drain_status.last_error` = `null`. Ошибка 401/`invalid_grant` — вернуться к шагу 6 (вход rclone).
 
-## 9. Рутина
+## 10. Рутины
 
-1. Создать рутину для бота Кузнец: `routines[0].name`, расписание `routines[0].cron` во времени, подтверждённом владельцем.
-2. Промт — весь файл `routines[0].prompt_file`.
+1. Создать обе рутины из `routines`: «Утренний скан госзакупок» (`0 7 * * *`) и «Почасовая проверка добора» (`0 * * * *`). Время — подтверждённое владельцем, часовой пояс бокса.
+2. Промт каждой — весь файл её `prompt_file`.
 3. Включить. Перед этим — все `first_run.preconditions`.
 
-КТ: рутина есть и включена.
+КТ: обе рутины есть и включены.
 
-## 10. Отчёт владельцу
+## 11. Отчёт владельцу
 
 Одно сообщение:
 
@@ -143,6 +163,7 @@ rm -rf /tmp/kuznets_check
 - скрипты развёрнуты, версии python и rclone;
 - rclone подключён к аккаунту Google, владеющему папкой «Госзакупки» (адрес не писать); раскладка «Сток»/«Бланки» найдена или создана;
 - какой OAuth-клиент (готовый или новый); если приложение в режиме Testing — вход истечёт через 7 дней, нужна публикация;
-- реестр: вариант 1, 2 (сколько номеров) или 3;
-- проверка: номер тестового тендера, код выхода, папка проверки удалена;
-- рутина: имя, время, часовой пояс; первый прогон возьмёт все подходящие тендеры и может идти больше часа (код 3 — доберёт на следующий день).
+- реестр: перенесённый из репозитория (выгружено N, в очереди N) или вариант 1/2/3;
+- проверка: 2 тестовые папки выгружены и удалены, боевой реестр не изменился;
+- добор запущен: pending N, примерно когда «Сток» догрузится (N × 30 с);
+- рутины: имена, время, часовой пояс. Пока очередь не пуста, утренний поиск не идёт.

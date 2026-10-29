@@ -24,8 +24,9 @@
 | `bot.prompt_file` | да | файл с системным промтом целиком |
 | `bot.placeholders` | нет | `"<плейсхолдер>": {bot: <имя>, note: ...}` — что заменить в промте |
 | `teammates[]` | нет | `{name, relation}` — с кем звено работает |
-| `routines[]` | нет | `{name, cron, timezone, prompt_file, enable}`; `enable: last` — включать после проверки |
-| `deploy[]` | нет | `{from, to}` — файлы из репозитория на бокс |
+| `routines[]` | нет | `{name, cron, timezone, prompt_file, command, enable}`; `command` — что рутина запускает; `enable: last` — включать после проверки |
+| `deploy[]` | нет | `{from, to, mode, when, note}` — файлы из репозитория на бокс; `mode` — права, `when` — на каком шаге |
+| `drain` | нет | фоновый процесс звена: `{script, start, status, step, interval, backoff, stops, lock, status_file, log, autostart}` |
 | `dependencies` | нет | `python: {min_version, venv, create, packages, install}`, `<инструмент>: {version, install, check}` |
 | `config` | нет | `{file, current, owner}` — рабочий конфиг, текущие значения, кто меняет |
 | `secrets[]` | нет | `{name, required, purpose, store, how}`; файл без секрета — `secret: false` |
@@ -33,6 +34,7 @@
 | `drive_layout` | нет | `{account, root, folders, rule, rclone_paths}` |
 | `owner_steps` | нет | `<id>: {why, say, options[], bot_does}` — то, что бот сделать не может; `say` — готовый текст владельцу |
 | `verification` | да | `{state_dir, steps[{cmd, expect, duration}], cleanup[]}` — проверка без следов в боевых данных |
+| `post_install[]` | нет | `{cmd, expect}` — шаги после проверки и до рутин (например, запуск фонового процесса) |
 | `first_run` | нет | `{preconditions[], notes[]}` — что должно быть до включения рутины |
 
 Новые ключи — можно. Тогда описать их здесь.

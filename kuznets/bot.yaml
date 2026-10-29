@@ -33,20 +33,54 @@ routines:
     cron: "0 7 * * *"
     timezone: 'часовой пояс бокса (проверить `date`); на старом боксе Asia/Krasnoyarsk, UTC+7. время подтверждает владелец'
     prompt_file: kuznets/bot/routine_prompt.md  # весь файл = промт рутины
+    command: cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_drain.py daily
     enable: last                                # включать после verification и first_run.preconditions
+  - name: Почасовая проверка добора
+    cron: "0 * * * *"
+    timezone: 'часовой пояс бокса'
+    prompt_file: kuznets/bot/routine_hourly_prompt.md
+    command: cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_drain.py status
+    enable: last
 
 deploy:
   - from: kuznets/scripts/gosplan_scanner.py
     to: /home/box/gosplan/scripts/gosplan_scanner.py
   - from: kuznets/scripts/gosplan_lib.py
     to: /home/box/gosplan/scripts/gosplan_lib.py
+  - from: kuznets/scripts/gosplan_drain.py
+    to: /home/box/gosplan/scripts/gosplan_drain.py
+  - from: kuznets/scripts/drain_start.sh
+    to: /home/box/gosplan/scripts/drain_start.sh
+    mode: "755"
   - from: kuznets/scripts/config.novosibirsk.yaml
     to: /home/box/gosplan/scripts/config.novosibirsk.yaml
   - from: kuznets/scripts/config.example.yaml
     to: /home/box/gosplan/scripts/config.example.yaml
   - from: kuznets/scripts/README.md
     to: /home/box/gosplan/scripts/README.md
-  # не создавать вручную: scripts/state, scripts/logs — сканер создаёт сам
+  - from: kuznets/state/export_00cd167b09dc.json
+    to: /home/box/gosplan/scripts/state/export_00cd167b09dc.json
+    when: 'до первого запуска; файл на боксе уже есть — не затирать'
+  # не создавать вручную: scripts/logs — сканер создаёт сам
+
+drain:                                          # добор очереди pending по одной закупке
+  script: /home/box/gosplan/scripts/gosplan_drain.py
+  start: /home/box/gosplan/scripts/drain_start.sh
+  status: cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_drain.py status
+  step: gosplan_scanner.py -c config.novosibirsk.yaml --remote 'gosplan:Госзакупки/Сток' --limit 1
+  interval: 'DRAIN_INTERVAL, 30 с старт-к-старту'
+  backoff: 'DRAIN_BACKOFF, 300 с после кода не 0/3 или прогона без движения очереди'
+  stops: 'очередь пуста; при пустой очереди сканер не вызывается (иначе --limit 1 начал бы новый поиск)'
+  lock: 'state/kuznets_run.lock (flock); общий для добора и утреннего прогона daily'
+  status_file: state/drain_status.json
+  log: logs/drain.log
+  autostart: 'systemd и cron на боксе нет; добор — отсоединённый процесс (новая сессия). после перезагрузки бокса его поднимает почасовая рутина'
+
+post_install:                                   # после verification, до включения рутин
+  - 'реестр kuznets/state/export_00cd167b09dc.json скопирован в /home/box/gosplan/scripts/state/ (deploy)'
+  - 'cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_drain.py status — pending > 0'
+  - 'cd /home/box/gosplan/scripts && ./drain_start.sh — добор запущен'
+  - 'через 2–3 минуты status: exported_last_hour растёт, drain_status.last_error = null'
 
 dependencies:
   python:
@@ -92,7 +126,7 @@ secrets:                                       # просить у владел�
     how: 'владелец получает в t.me/gosplan_project'
   - name: старый реестр выгрузки
     required: false
-    purpose: 'не выгрузить повторно тендеры, которые прежний Кузнец уже положил в тот же «Сток»'
+    purpose: 'не выгрузить повторно тендеры, которые прежний Кузнец уже положил в тот же «Сток»; перенесённая копия — kuznets/state/export_00cd167b09dc.json'
     file: state/export_00cd167b09dc.json        # имя = sha1 строки 'gosplan:Госзакупки/Сток'[:12]
     secret: false                               # только публичные номера тендеров
     how: 'first_run.preconditions'
@@ -129,39 +163,55 @@ owner_steps:
     say: "Откройте мой рабочий стол (бокс) и войдите в Google аккаунтом, владеющим папкой «Госзакупки». Окно входа уже открыто. Нажмите «Разрешить». Если Google пишет, что приложение не проверено, — «Дополнительно» → «Перейти»."
     bot_does: "rclone config create gosplan drive scope=drive client_id=$GOOGLE_OAUTH_CLIENT_ID client_secret=$GOOGLE_OAUTH_CLIENT_SECRET — в фоне; ссылку http://127.0.0.1:53682/auth?... из вывода открыть в браузере бокса; ждать завершения команды"
   old_registry:
-    say: "Если прежний Кузнец уже выгружал тендеры в «Госзакупки/Сток», пришлите файл state/export_00cd167b09dc.json со старого бокса (там только номера тендеров) и остановите рутину прежнего Кузнеца. Если не выгружал — так и скажите."
+    say: "Реестр выгрузки прежнего Кузнеца уже в репозитории (kuznets/state, выгружено 5, в очереди 515 на 29.10.2026). Остановите рутины прежнего Кузнеца и его фоновую выгрузку, если она есть: два Кузнеца на один «Сток» дадут дубли. Подтвердите, когда остановлено."
   confirm_schedule:
-    say: "Рутина «Утренний скан госзакупок»: каждый день в 07:00 по времени бокса (<часовой пояс>). Подтвердите или назовите другое время."
+    say: "Рутины Кузнеца: «Утренний скан госзакупок» каждый день в 07:00 и «Почасовая проверка добора» каждый час в :00, по времени бокса (<часовой пояс>). Подтвердите или назовите другое время утреннего скана."
 
 verification:
-  state_dir: /tmp/kuznets_check                # временный реестр; боевой остаётся пустым
+  state_dir: /tmp/kuznets_check                # временный реестр; боевой не трогается
+  test_remote: gosplan:Госзакупки/_проверка_кузнеца
   steps:
     - cmd: rclone lsd gosplan:Госзакупки
       expect: 'видны Сток и Бланки'
-    - cmd: cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_scanner.py -c config.novosibirsk.yaml --dry-run
+    - cmd: md5sum /home/box/gosplan/scripts/state/export_00cd167b09dc.json
+      expect: 'записать сумму; в конце сверить — боевой реестр не изменился'
+    - cmd: cd /home/box/gosplan/scripts && GOSPLAN_STATE_DIR=/tmp/kuznets_check ../.venv/bin/python gosplan_scanner.py -c config.novosibirsk.yaml --dry-run
       expect: 'stdout "найдено: 0", "новых: 0", "выгружено: 0"; код 0; URL запросов в stderr'
+    - cmd: |
+        mkdir -p /tmp/kuznets_check && /home/box/gosplan/.venv/bin/python - <<'PY'
+        import json
+        d = json.load(open('/home/box/gosplan/scripts/state/export_00cd167b09dc.json', encoding='utf-8'))
+        d['pending'] = d['pending'][:2]; d['remote'] = 'gosplan:Госзакупки/_проверка_кузнеца'
+        json.dump(d, open('/tmp/kuznets_check/export_0ad93d739bc6.json', 'w', encoding='utf-8'), ensure_ascii=False)
+        print(len(d['pending']))
+        PY
+      expect: '2 — тестовый реестр: копия боевого, 2 закупки в очереди, имя = sha1 тестового remote'
     - cmd: cd /home/box/gosplan/scripts && GOSPLAN_STATE_DIR=/tmp/kuznets_check ../.venv/bin/python gosplan_scanner.py -c config.novosibirsk.yaml --remote 'gosplan:Госзакупки/_проверка_кузнеца' --limit 1; echo "exit=$?"
-      expect: 'stdout "выгружено: 1"; exit=3 (в очереди остальные) или exit=0. "найдено: 0" — подходящих тендеров сейчас нет; только для проверки повторить с --price-max 1000000'
-      duration: 'до 30 минут (поиск по всем страницам при лимите API)'
+      expect: 'stderr "pending не пуст — поиск пропущен, сначала добор", "pending: осталось 1"; stdout "найдено: 0", "новых: 0", "выгружено: 1"; exit=3'
+      duration: '10–30 с'
+    - cmd: cd /home/box/gosplan/scripts && GOSPLAN_STATE_DIR=/tmp/kuznets_check KUZNETS_REMOTE='gosplan:Госзакупки/_проверка_кузнеца' DRAIN_INTERVAL=5 ../.venv/bin/python gosplan_drain.py run; echo "exit=$?"
+      expect: 'exit=0 (добор в переднем плане выгрузил последнюю и вышел); в logs/drain.log "pending 1 -> 0", "очередь пуста"'
+    - cmd: cd /home/box/gosplan/scripts && GOSPLAN_STATE_DIR=/tmp/kuznets_check KUZNETS_REMOTE='gosplan:Госзакупки/_проверка_кузнеца' ../.venv/bin/python gosplan_drain.py status
+      expect: 'pending 0; drain_running false; drain_status.state "done"; last_error null'
     - cmd: rclone lsf 'gosplan:Госзакупки/_проверка_кузнеца' --dirs-only
-      expect: 'одна папка <номер>/'
-    - cmd: rclone lsf 'gosplan:Госзакупки/_проверка_кузнеца/<номер>'
-      expect: 'tender.json и tender.md; формат — kuznets/FORMAT.md'
+      expect: 'две папки <номер>/, в каждой tender.json и tender.md (kuznets/FORMAT.md)'
   cleanup:
     - rclone purge 'gosplan:Госзакупки/_проверка_кузнеца'
     - rm -rf /tmp/kuznets_check
-    - cmd: ls /home/box/gosplan/scripts/state
-      expect: 'нет export_*.json (боевой реестр не тронут), если не положен старый реестр'
+    - cmd: md5sum /home/box/gosplan/scripts/state/export_00cd167b09dc.json
+      expect: 'та же сумма, что до проверки'
 
 first_run:
   preconditions:
     - verification пройдена, cleanup сделан
+    - 'post_install выполнен, добор запущен'
     - «Сток» существующий не пересоздан
-    - старый реестр положен в /home/box/gosplan/scripts/state/ ИЛИ собран из номеров (INSTALL_BY_BOT.md, шаг 7) ИЛИ владелец подтвердил, что прежний Кузнец в этот «Сток» не выгружал
+    - 'реестр из kuznets/state положен в /home/box/gosplan/scripts/state/ (INSTALL_BY_BOT.md, шаг 7, вариант 0); иначе вариант 1–3 оттуда же'
     - рутина прежнего Кузнеца остановлена
   notes:
-    - первый прогон берёт все подходящие тендеры (пустой last_completed_at = без фильтра даты публикации)
-    - тестовый API часто отвечает 429; ~80 тендеров шли ~45 минут
-    - код 3 = очередь не пуста; следующий запуск добирает её без нового поиска
+    - перенесённый реестр несёт очередь pending (515 на 29.10.2026); её выгружает добор, по одной примерно раз в 30 с (~4–5 часов)
+    - пока очередь не пуста, утренний прогон не ищет; первый поиск — утром после опустошения очереди, с даты last_completed_at минус 1 день
+    - без реестра первый поиск берёт все подходящие тендеры (пустой last_completed_at = без фильтра даты публикации)
+    - тестовый API часто отвечает 429; добор тогда идёт медленнее, это норма
     - папки, которые уже лежат в «Сток», сканер не копирует повторно (rclone lsf перед выгрузкой), но тратит на них запрос API
     - папки, которые Фатима уже унесла из «Сток», при пустом реестре выгрузятся снова
