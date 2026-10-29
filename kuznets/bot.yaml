@@ -30,14 +30,14 @@ teammates:                                    # только по имени. id
 
 routines:
   - name: Утренний скан госзакупок
-    cron: "0 7 * * *"
-    timezone: 'часовой пояс бокса (проверить `date`); на старом боксе Asia/Krasnoyarsk, UTC+7. время подтверждает владелец'
+    cron: "0 7 * * *"                           # в Grok Bot: CRON_TZ=Asia/Novosibirsk 0 7 * * *
+    timezone: Asia/Novosibirsk                  # единый пояс рутин конвейера (UTC+7, как Asia/Krasnoyarsk старого бокса). пояс бокса не использовать. время подтверждает владелец
     prompt_file: kuznets/bot/routine_prompt.md  # весь файл = промт рутины
     command: cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_drain.py daily
     enable: last                                # включать после verification и first_run.preconditions
   - name: Почасовая проверка добора
     cron: "0 * * * *"
-    timezone: 'часовой пояс бокса'
+    timezone: Asia/Novosibirsk                  # в Grok Bot: CRON_TZ=Asia/Novosibirsk 0 * * * *
     prompt_file: kuznets/bot/routine_hourly_prompt.md
     command: cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_drain.py status
     enable: last
@@ -167,7 +167,7 @@ owner_steps:
   old_registry:
     say: "Реестр выгрузки прежнего Кузнеца уже в репозитории (kuznets/state, выгружено 5, в очереди 515 на 29.10.2026). Остановите рутины прежнего Кузнеца и его фоновую выгрузку, если она есть: два Кузнеца на один «Сток» дадут дубли. Подтвердите, когда остановлено."
   confirm_schedule:
-    say: "Рутины Кузнеца: «Утренний скан госзакупок» каждый день в 07:00 и «Почасовая проверка добора» каждый час в :00, по времени бокса (<часовой пояс>). Подтвердите или назовите другое время утреннего скана."
+    say: "Рутины Кузнеца: «Утренний скан госзакупок» каждый день в 07:00 и «Почасовая проверка добора» каждый час в :00, по Новосибирску (Asia/Novosibirsk). Подтвердите или назовите другое время утреннего скана."
 
 verification:
   state_dir: /tmp/kuznets_check                # временный реестр; боевой не трогается

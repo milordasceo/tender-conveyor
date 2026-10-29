@@ -88,7 +88,7 @@ python3 /home/box/ochkarik/scripts/calc.py --nmck 40785,40 --delivery 1500 --lin
 
 | имя | cron | часовой пояс | промт |
 |---|---|---|---|
-| Расчёт: папка «К расчёту» | `*/30 * * * *` (каждые 30 минут, гибко: раньше до 15 мин, позже до 15 мин) | Europe/Madrid (`CRON_TZ=Europe/Madrid */30 * * * *`) | `bot/routine_prompt.md` |
+| Расчёт: папка «К расчёту» | `*/30 * * * *` (каждые 30 минут, гибко: раньше до 15 мин, позже до 15 мин) | Asia/Novosibirsk (`CRON_TZ=Asia/Novosibirsk */30 * * * *`) | `bot/routine_prompt.md` |
 
 Включается последней, после проверки и по слову владельца.
 
@@ -111,7 +111,7 @@ python3 /home/box/ochkarik/scripts/calc.py --nmck 40785,40 --delivery 1500 --lin
 2. Создать `/home/box/ochkarik/{work,state/в_работе,scripts,examples}`, положить `scripts/calc.py` и образец.
 3. Убедиться, что есть python3 ≥ 3.10, rclone и remote `gosplan:` (`rclone lsf 'gosplan:Госзакупки'` — виден `К расчёту/`).
 4. Проверка (`bot.yaml` → `verification`).
-5. Рутина из `bot/routine_prompt.md`: `CRON_TZ=Europe/Madrid */30 * * * *`, гибко ±15 минут; включить по слову владельца.
+5. Рутина из `bot/routine_prompt.md`: `CRON_TZ=Asia/Novosibirsk */30 * * * *`, гибко ±15 минут; включить по слову владельца.
 
 ## Проверка работы
 

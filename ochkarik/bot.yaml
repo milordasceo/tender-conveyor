@@ -29,8 +29,8 @@ teammates:                                       # только по имени
 
 routines:
   - name: 'Расчёт: папка «К расчёту»'
-    cron: "*/30 * * * *"                          # в Grok Bot: CRON_TZ=Europe/Madrid */30 * * * *
-    timezone: Europe/Madrid
+    cron: "*/30 * * * *"                          # в Grok Bot: CRON_TZ=Asia/Novosibirsk */30 * * * *
+    timezone: Asia/Novosibirsk                  # единый пояс рутин конвейера; для */30 на время не влияет
     timing: {mode: flexible, earlyMinutes: 15, lateMinutes: 15}
     prompt_file: ochkarik/bot/routine_prompt.md  # весь файл = промт рутины, дословно
     command: 'нет одной команды: рутина идёт по шагам промта (rclone + расчёт)'
@@ -106,7 +106,7 @@ owner_steps:
   old_bot:
     say: "Если прежний Очкарик ещё работает, остановите его рутину: два бота на одну «К расчёту» допишут расчёт в tender.md дважды. Подтвердите, когда остановлено."
   confirm_routine:
-    say: "Рутина Очкарика «Расчёт: папка «К расчёту»»: каждые 30 минут, гибко ±15 минут, Europe/Madrid, круглосуточно. При пустой папке молчит. Включить сейчас?"
+    say: "Рутина Очкарика «Расчёт: папка «К расчёту»»: каждые 30 минут, гибко ±15 минут, Asia/Novosibirsk, круглосуточно. При пустой папке молчит. Включить сейчас?"
 
 verification:
   state_dir: /tmp/ochkarik_check                 # всё локально; боевые папки Drive только читаются
