@@ -36,7 +36,7 @@ def load(p):
     d = json.loads(p.read_text(encoding="utf-8-sig"))
     for c in CATS:
         if not isinstance(d.get(c), int) or isinstance(d.get(c), bool):
-            raise SystemExit(f"в {p} поле «{c}» не целое: {d.get(c)!r} — не править вслепую, сообщить владельцу")
+            raise SystemExit(f"в {p} поле «{c}» не целое: {d.get(c)!r} — не править вслепую, сообщить Тэндер Мэну")
     return d
 
 
