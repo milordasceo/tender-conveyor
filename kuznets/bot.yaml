@@ -64,6 +64,7 @@ deploy:
   # не создавать вручную: scripts/logs — сканер создаёт сам
 
 drain:                                          # добор очереди pending по одной закупке
+  deploy_status: 'скрипты gosplan_drain.py и drain_start.sh выложены в репо (kuznets/scripts/). на текущем общем box в /home/box/gosplan/scripts НЕ развёрнуты (проверено 29.10.2026): там работает прежний набор без добора. разворачивать по INSTALL_BY_BOT шаг 4; до этого рутины с gosplan_drain.py не создавать'
   script: /home/box/gosplan/scripts/gosplan_drain.py
   start: /home/box/gosplan/scripts/drain_start.sh
   status: cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_drain.py status
