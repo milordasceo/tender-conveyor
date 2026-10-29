@@ -1,0 +1,56 @@
+{
+  "number": "0351200003326001418",
+  "law": "44-ФЗ",
+  "purchase_type": "epNotificationEZK2020",
+  "purchase_type_name": "запрос котировок в электронной форме",
+  "subject": "2026-№1615 (ЗК) Поставка лекарственных препаратов для медицинского применения: Терипаратид",
+  "initial_price": 108106.92,
+  "currency": "RUB",
+  "region": 54,
+  "stage": 1,
+  "stage_end": "2026-10-28T03:00:00",
+  "published_at": "2026-10-21T02:41:02.356000",
+  "customers": [
+    "5402155123"
+  ],
+  "delivery_places": [
+    "обл. Новосибирская, г.о. город Новосибирск, г. Новосибирск, ул. Дуси Ковальчук, зд. 77",
+    "помещение 4, 630082"
+  ],
+  "city_check": "в городе",
+  "zakupki_search": "https://zakupki.gov.ru/epz/order/extendedSearch/results.html?searchString=0351200003326001418",
+  "zakupki_card": "https://zakupki.gov.ru/epz/order/notice/zk20/view/common-info.html?regNumber=0351200003326001418",
+  "gosplan": "https://v2test.gosplan.info/fz44/purchases/0351200003326001418",
+  "documents": [
+    {
+      "name": "НМЦК_21 (2).xlsx",
+      "description": "НМЦК_21 (2).xlsx",
+      "url": "https://zakupki.gov.ru/44fz/filestore/public/1.0/download/priz/file.html?uid=01A15C450F08790996EE12EC7471F40A",
+      "size": "18364"
+    },
+    {
+      "name": "2026 ЗК ЭК ЛП БЕЗ Этап Проект контракта.docx",
+      "description": "2026 ЗК ЭК ЛП БЕЗ Этап Проект контракта.docx",
+      "url": "https://zakupki.gov.ru/44fz/filestore/public/1.0/download/priz/file.html?uid=01A15C451F4E7AF8A0CC9AD034A297F9",
+      "size": "42581"
+    },
+    {
+      "name": "Описание объекта закупки.docx",
+      "description": "Описание объекта закупки.docx",
+      "url": "https://zakupki.gov.ru/44fz/filestore/public/1.0/download/priz/file.html?uid=01A15C45216976E0AE5F5AED8B9AB3A9",
+      "size": "83292"
+    },
+    {
+      "name": "2026 Приложение № 4 ЗК ЛП ЖНВЛПТребовние к содержанию,составу, заявки, инструкция.docx",
+      "description": "2026 Приложение № 4 ЗК ЛП ЖНВЛПТребовние к содержанию,составу, заявки, инструкция.docx",
+      "url": "https://zakupki.gov.ru/44fz/filestore/public/1.0/download/priz/file.html?uid=01A15C450CE671D28C534E72C99B237C",
+      "size": "17923"
+    },
+    {
+      "name": "Печатная форма извещения",
+      "description": "печатная форма извещения",
+      "url": "https://zakupki.gov.ru/epz/order/notice/printForm/view.html?regNumber=0351200003326001418",
+      "size": null
+    }
+  ]
+}

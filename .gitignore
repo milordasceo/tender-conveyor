@@ -1,0 +1,10 @@
+.env
+*.slot
+*.lock
+__pycache__/
+logs/
+state/
+tenders/
+rclone.conf
+client_secret*.json
+*.token
