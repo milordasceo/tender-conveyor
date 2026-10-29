@@ -38,6 +38,7 @@
 | `verification` | да | см. раздел «Проверка» |
 | `post_install[]` | нет | `{cmd, expect}` — шаги после проверки и до рутин |
 | `first_run` | нет | `{preconditions[], notes[]}` — что должно быть до включения рутины |
+| `first_setup` | нет | только у главы команды: этап «первичная настройка после создания ботов» — `{starts, readiness_message, readiness_list, ping_after, rule, steps[], owner_checklist[], live_when}`; элемент `steps[]`/`owner_checklist[]` — `{id, who, what, done_when}` |
 
 Новые ключи — можно. Тогда описать их здесь.
 
@@ -50,6 +51,14 @@
 - у звеньев в `teammates` и `config.messaging` — единственный адресат отчётов (имя главы), владельцу в чат звена не писать, если так решил владелец.
 
 Кто кому подчиняется и кто с владельцем говорит — только из `order_hint` + `teammates` + `config.messaging`, без дублирующих id.
+
+## Отчёт о готовности
+
+Отдельного ключа у звена нет. Последний шаг `INSTALL_BY_BOT.md` каждого звена — сообщение главе команды (SendToAgent) в формате `first_setup.readiness_message` главы:
+
+«Готов: <имя звена>, мой id <id>, от владельца нужно: <список>»
+
+Список строится из папки звена: невыполненные ключи `owner_steps` и `connectors` с `required: true`; нечего — «ничего». Рутины звено при установке не создаёт: их создают по `routines[]` в пункте `routines` чеклиста главы (`first_setup.owner_checklist`), с подтверждением владельца.
 
 ## Плейсхолдеры `bot.placeholders`
 
