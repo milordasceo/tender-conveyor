@@ -5,6 +5,7 @@ link: tender_man
 order_hint: 'не звено конвейера, а глава команды: над всеми пятью звеньями (Кузнец → Фатима → Черри Пикер → Очкарик → Сисадмин); единственный, кто говорит с владельцем'
 docs:
   readme: tender_man/README.md
+  install: tender_man/INSTALL_BY_BOT.md             # пустой бот → Тэндер Мэн → остальные звенья, по шагам
   prompts: tender_man/prompts/                    # промты рутин отчётов
 
 bot:
