@@ -1,6 +1,6 @@
 # Схема `bot.yaml`
 
-Каждое звено кладёт в свою папку `<звено>/bot.yaml`. По нему звено пересоздаётся без догадок. Пример — `kuznets/bot.yaml`.
+Каждое звено кладёт в свою папку `<звено>/bot.yaml`. По нему звено пересоздаётся без догадок. Пример — `kuznets/bot.yaml`. Глава команды — `tender_man/bot.yaml`.
 
 Правила:
 
@@ -16,25 +16,75 @@
 |---|---|---|
 | `schema_version` | да | `1` |
 | `link` | да | имя папки звена |
-| `order_hint` | нет | место в конвейере словами, как его знает звено |
+| `order_hint` | нет | место в конвейере словами; у главы команды — что он над звеньями, не звено |
 | `docs` | нет | `{readme, install, setup, format, ...}` — пути к описаниям звена |
 | `bot.name` | да | имя бота |
 | `bot.title` | да | заголовок |
 | `bot.description` | да | одна-две фразы |
 | `bot.prompt_file` | да | файл с системным промтом целиком |
-| `bot.placeholders` | нет | `"<плейсхолдер>": {bot: <имя>, note: ...}` — что заменить в промте |
-| `teammates[]` | нет | `{name, relation}` — с кем звено работает |
-| `routines[]` | нет | `{name, cron, timezone, prompt_file, command, enable}`; `command` — что рутина запускает; `enable: last` — включать после проверки |
+| `bot.placeholders` | нет | плейсхолдеры id в промте; формат — ниже |
+| `teammates[]` | нет | `{name, relation}` — с кем работает; у главы — все звенья и владелец; у звена — кому отчитывается |
+| `routines[]` | нет | см. раздел «Рутины» |
 | `deploy[]` | нет | `{from, to, mode, when, note}` — файлы из репозитория на бокс; `mode` — права, `when` — на каком шаге |
 | `drain` | нет | фоновый процесс звена: `{script, start, status, step, interval, backoff, stops, lock, status_file, log, autostart}` |
-| `dependencies` | нет | `python: {min_version, venv, create, packages, install}`, `<инструмент>: {version, install, check}` |
-| `config` | нет | `{file, current, owner}` — рабочий конфиг, текущие значения, кто меняет |
+| `dependencies` | нет | `python: {min_version, venv, create, packages, install}`, `<инструмент>: {version, install, check, ...}` |
+| `config` | нет | `{file, current, owner, messaging}` — рабочий конфиг; `messaging` — кому писать (строка) |
 | `secrets[]` | нет | `{name, required, purpose, store, how}`; файл без секрета — `secret: false` |
 | `connectors[]` | нет | `{name, required, account, purpose}`; аккаунт — описанием, не адресом |
+| `tools[]` | нет | `{name, required, purpose}` — встроенные/коннекторные инструменты бота (например `SendToAgent`) |
 | `drive_layout` | нет | `{account, root, folders, rule, rclone_paths}` |
+| `notion_layout` | нет | описание страниц/баз Notion по названиям (без id): `{page, database, properties, ...}` |
 | `owner_steps` | нет | `<id>: {why, say, options[], bot_does}` — то, что бот сделать не может; `say` — готовый текст владельцу |
-| `verification` | да | `{state_dir, steps[{cmd, expect, duration}], cleanup[]}` — проверка без следов в боевых данных |
-| `post_install[]` | нет | `{cmd, expect}` — шаги после проверки и до рутин (например, запуск фонового процесса) |
+| `verification` | да | см. раздел «Проверка» |
+| `post_install[]` | нет | `{cmd, expect}` — шаги после проверки и до рутин |
 | `first_run` | нет | `{preconditions[], notes[]}` — что должно быть до включения рутины |
 
 Новые ключи — можно. Тогда описать их здесь.
+
+## Роль над конвейером
+
+Отдельного ключа `role: supervisor` нет. Глава команды задаётся так:
+
+- `order_hint` — явно: не звено, а над всеми;
+- `teammates[]` — все звенья с `relation` «отчитывается / получает команды»;
+- у звеньев в `teammates` и `config.messaging` — единственный адресат отчётов (имя главы), владельцу в чат звена не писать, если так решил владелец.
+
+Кто кому подчиняется и кто с владельцем говорит — только из `order_hint` + `teammates` + `config.messaging`, без дублирующих id.
+
+## Плейсхолдеры `bot.placeholders`
+
+Два формата допустимы (оба уже в репо):
+
+1. **объект** (предпочтителен для новых): `"<id Имя>": {bot: Имя, note: ...}`
+2. **строка** (как у ochkarik): `"<id Имя>": "подставить id при создании"`
+
+Ключ всегда строка-плейсхолдер в угловых скобках. Реальные uuid в репозиторий не писать.
+
+## Рутины
+
+Элемент `routines[]`:
+
+| поле | обяз. | что |
+|---|---|---|
+| `name` | да | имя |
+| `cron` | да | 5-поле cron; часовой пояс — в `timezone` или в комментарии `CRON_TZ=…` |
+| `timezone` | нет | IANA, напр. `Asia/Novosibirsk` |
+| `prompt_file` | нет | файл с текстом рутины целиком |
+| `command` | нет | что рутина запускает одной фразой |
+| `enable` | нет | когда включать: `last`, `после verification`, или свободный текст |
+| `status` | нет | текущее состояние словами (`включена`, `пауза`, …) — опционально |
+| `timing` | нет | `{mode: flexible\|exact, earlyMinutes, lateMinutes}` — как в Grok Bot UpdateRoutine |
+
+Если рутину создаёт **владелец** (не бот при установке): в `enable` свободным текстом («владелец создаёт сам, после проверки»), без выдуманных id рутин. Промт лежит в `prompt_file`; `owner_steps` может содержать готовый `say` с расписанием.
+
+## Проверка `verification`
+
+Обязателен блок `verification`, но не каждое поле:
+
+| поле | обяз. | что |
+|---|---|---|
+| `steps[]` | да | `{cmd, expect}` — проверка |
+| `cleanup[]` | нет | что убрать после |
+| `state_dir` | нет | каталог на боксе для тестового состояния; у ботов, которые только пишут сообщения и ничего не пишут на диск, — строка `нет: …` или ключ опустить |
+
+Для главы команды / message-only: шаги через `SendToAgent` и ручной прогон промта отчёта; `state_dir` не требуется.
