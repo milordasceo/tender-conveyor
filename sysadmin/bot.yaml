@@ -1,0 +1,177 @@
+# манифест звена «Сисадмин». схема — ../SCHEMA.md
+# пути repo — от корня репозитория. пути box — абсолютные на боксе Grok Bot.
+schema_version: 1
+link: sysadmin
+order_hint: 'звено после просчёта рентабельности; вход — «Госзакупки/К рассмотрению/<номер>» (tender.json, tender.md, цены.md), выход — карточка в базе Notion «Тендеры» на странице «К рассмотрению»'
+docs:
+  readme: sysadmin/README.md                     # роль, структура базы Notion, правила полей
+  install: sysadmin/INSTALL_BY_BOT.md            # установка ботом, по шагам
+  example: sysadmin/examples/0151100007126000034 # вход (input/) и выход (card.md, properties.json)
+  scripts: sysadmin/scripts/notion_card.py       # помощник: свойства и тело карточки из папки тендера
+
+bot:
+  name: Сисадмин
+  title: Перенос тендеров в Notion — звено конвейера тендеров
+  description: Берёт рентабельные тендеры из «Госзакупки/К рассмотрению» на Диске и заводит по каждому карточку в базе Notion «Тендеры» (страница «К рассмотрению») — цена, прибыль, расходы, откуда забирать, куда везти, сроки и всё о закупке. На Диск не пишет.
+  prompt_file: sysadmin/bot/prompt.md            # весь файл = системный промт, вставлять как есть (после замены плейсхолдера)
+  placeholders:                                  # заменить в prompt_file при создании
+    "<id Кузнеца>": {bot: Кузнец, note: 'подставить id при создании; через него — вопросы по репозиторию'}
+    "<id Тэндер Мэна>": {bot: Тэндер Мэн, note: 'подставить id при создании; ему — «цель дня выполнена», раз в день'}
+
+teammates:                                       # только по имени
+  - name: владелец (Станислав)
+    relation: 'получает отчёт в чате Сисадмина; решает по карточкам в Notion; подключает Notion карточкой подключения'
+  - name: Кузнец
+    relation: 'настраивает и чинит rclone remote gosplan:; отвечает на вопросы по репозиторию и папке sysadmin/'
+  - name: Тэндер Мэн
+    relation: 'главный бот. Сисадмин пишет ему один раз в день, когда в «Тендеры» за сутки добавлено daily_goal тендеров (сейчас 10). Тэндер Мэн сообщает новую цель дня — Сисадмин переходит на неё'
+  - name: Очкарик
+    relation: 'предыдущее звено; кладёт папки рентабельных тендеров в «К рассмотрению». связь только через папку'
+
+routines:
+  - name: Перенос тендеров в Notion
+    status: 'ПРЕДЛОЖЕНИЕ, рутина не создана. владелец ещё не выбрал: по команде или по расписанию'
+    cron: "0 * * * *"                            # предлагается: каждый час. в Grok Bot: CRON_TZ=Europe/Madrid 0 * * * *
+    timezone: Europe/Madrid
+    timing: {mode: flexible, earlyMinutes: 15, lateMinutes: 15}
+    prompt_file: sysadmin/bot/routine_prompt.md  # весь файл = промт рутины, дословно; тем же текстом — запуск по команде
+    command: 'нет одной команды: рутина идёт по шагам промта (rclone + коннектор Notion)'
+    enable: 'не создавать и не включать, пока владелец не выберет режим (owner_steps.choose_mode). выбрал расписание — создать последней, после verification'
+
+deploy:
+  - from: sysadmin/scripts/notion_card.py
+    to: /home/box/sysadmin/scripts/notion_card.py
+    mode: "755"
+    when: 'шаг 4 INSTALL_BY_BOT.md'
+    note: 'помощник; бот может работать и без него'
+  - from: sysadmin/examples/0151100007126000034
+    to: /home/box/sysadmin/examples/0151100007126000034
+    when: 'шаг 4 INSTALL_BY_BOT.md'
+    note: 'образец для проверки. рабочие папки создать пустыми: /home/box/sysadmin/{work,state/goal_sent}; /home/box/sysadmin/state/daily_goal = 10. уже есть — не затирать'
+
+dependencies:
+  python:
+    min_version: "3.10"
+    venv: 'не нужен: только стандартная библиотека'
+    packages: []
+  rclone:
+    version: "1.75.2"                            # как у Кузнеца; новее — допустимо
+    install: curl https://rclone.org/install.sh | sudo bash
+    check: rclone version
+    remote_name: gosplan
+    note: 'нужен rclone remote gosplan: с доступом к Drive (настраивает Кузнец). конфиг rclone Сисадмин не читает и не трогает'
+
+config:
+  file: 'нет отдельного файла: правила — в bot/prompt.md и bot/routine_prompt.md'
+  current:
+    input: 'gosplan:Госзакупки/К рассмотрению'
+    city_level: 'нет; город — из tender.json delivery.city'
+    notion_page: 'К рассмотрению (корень рабочего пространства, значок 📋)'
+    notion_database: 'Тендеры (полностраничная база внутри «К рассмотрению»)'
+    profit: 'наибольшая «Прибыль варианта X» из tender.md'
+    expenses: 'закупка + доставка + налог того же варианта из tender.md (сумма считается)'
+    pickup: 'поставщик лучшего варианта из цены.md'
+    destination: 'tender.json delivery.address + важное из notes / special_notes'
+    other_fields: 'tender.json'
+    duplicates: 'проверка по «Номер тендера» перед созданием строки'
+    work_dir: /home/box/sysadmin/work
+    daily_goal: 10                               # тендеров к рассмотрению за сутки в «Тендеры»; меняет Тэндер Мэн сообщением
+    daily_goal_file: /home/box/sysadmin/state/daily_goal   # текущее значение; файла нет — 10
+    daily_goal_count: 'строки базы «Тендеры» с createdTime за текущие сутки, Europe/Madrid (часовой пояс бокса)'
+    daily_goal_notify: 'один раз в день боту Тэндер Мэн; метка /home/box/sysadmin/state/goal_sent/ГГГГ-ММ-ДД'
+  owner: 'владелец; правила меняются только по его команде (правка обоих промтов). daily_goal меняет Тэндер Мэн сообщением'
+
+secrets: []                                      # своих секретов нет. Notion — через коннектор (вход в карточке подключения), Диск — общий rclone remote gosplan: (Кузнец)
+
+connectors:
+  - name: Notion
+    required: true
+    account: рабочее пространство Notion владельца, где лежит страница «К рассмотрению»
+    purpose: 'поиск страницы и базы, создание страниц-карточек, изменение свойств и раскладки базы (update_data_source), проверка дублей'
+  - name: Google Drive
+    required: false
+    account: аккаунт Google, владеющий папкой «Госзакупки»
+    purpose: 'не обязателен: вся работа с Диском через rclone'
+
+drive_layout:                                    # id папок не хардкодить
+  account: аккаунт Google, владеющий папкой «Госзакупки»
+  root: Госзакупки
+  folders:
+    - К рассмотрению                             # вход, только чтение
+  rule: 'только чтение. ничего не создавать, не переносить, не удалять'
+  rclone_paths:
+    in: 'gosplan:Госзакупки/К рассмотрению'
+
+notion_layout:                                   # id страниц, баз и источников данных не хардкодить — искать по названию
+  page: {title: К рассмотрению, icon: "📋", parent: корень рабочего пространства}
+  database: {title: Тендеры, parent: К рассмотрению, full_page: true}
+  properties:                                    # в этом порядке
+    - {name: Номер тендера, type: title}
+    - {name: Полная цена, type: number, format: ruble, source: 'tender.json nmck.amount (НМЦК)'}
+    - {name: Прибыль, type: number, format: ruble, source: 'tender.md: наибольшая «Прибыль варианта X»'}
+    - {name: Расходы, type: number, format: ruble, source: 'tender.md: закупка + доставка + налог того же варианта'}
+    - {name: Город, type: select, source: 'tender.json delivery.city'}
+    - {name: Категория, type: select, options: {В городе: green, Загород: orange, С ограничениями: red}, source: 'tender.json category'}
+    - {name: Количество поставок, type: rich_text, source: 'tender.json supply.deliveries_count'}
+    - {name: Откуда забирать, type: rich_text, source: 'цены.md: поставщик лучшего варианта'}
+    - {name: Куда везти, type: rich_text, source: 'tender.json delivery.address + notes'}
+    - {name: Подача до, type: date, time: true, source: 'tender.json deadline.iso'}
+    - {name: Предмет, type: rich_text, source: 'tender.json subject + количество'}
+    - {name: Ссылка, type: url, source: 'tender.json url'}
+  page_layout_header: [Полная цена, Прибыль, Расходы, Количество поставок, Откуда забирать, Куда везти, Город, Категория, Подача до, Предмет, Ссылка]
+  ddl: |
+    ADD COLUMN "Полная цена" NUMBER FORMAT 'ruble'; ADD COLUMN "Прибыль" NUMBER FORMAT 'ruble'; ADD COLUMN "Расходы" NUMBER FORMAT 'ruble';
+    ADD COLUMN "Город" SELECT('Новосибирск':blue); ADD COLUMN "Категория" SELECT('В городе':green, 'Загород':orange, 'С ограничениями':red);
+    ADD COLUMN "Количество поставок" RICH_TEXT; ADD COLUMN "Откуда забирать" RICH_TEXT; ADD COLUMN "Куда везти" RICH_TEXT;
+    ADD COLUMN "Подача до" DATE; ADD COLUMN "Предмет" RICH_TEXT; ADD COLUMN "Ссылка" URL
+  card_sections: [Главное, 'Особые условия (+ Особые пометки)', Сроки, Что поставляем, Где купить, Расчёт рентабельности, Заказчик и закупка]
+
+owner_steps:
+  connect_notion:
+    why: 'Сисадмин пишет в Notion через коннектор; подключить его может только владелец'
+    say: "Для Сисадмина нужен доступ к Notion. Сейчас покажу карточку подключения Notion — нажмите её и войдите в рабочее пространство, где должна быть страница «К рассмотрению». Дайте доступ к этой странице (или ко всему пространству, если страницы ещё нет — тогда я создам её сам)."
+    bot_does: 'показать карточку подключения коннектора Notion; после входа — notion search «К рассмотрению»'
+  rclone_ready:
+    why: 'Сисадмин читает Диск через общий rclone remote gosplan:, его настраивает Кузнец'
+    say: "Для Сисадмина нужен rclone remote gosplan: с доступом к Google Диску (папка «Госзакупки»). Его настраивает Кузнец. Подтвердите, что Кузнец уже установлен и вход rclone сделан, или попросите Кузнеца это сделать."
+    bot_does: "проверка: rclone lsf 'gosplan:Госзакупки' — виден К рассмотрению/. конфиг rclone не открывать"
+  test_card:
+    say: "Для проверки создам в Notion тестовую страницу «_проверка_сисадмина» с образцом карточки тендера 0151100007126000034 и потом уберу её в корзину. Базу «Тендеры» не трогаю. Разрешаете?"
+  choose_mode:
+    why: 'рутина пока только предложение: владелец не выбрал режим'
+    say: "Как запускать Сисадмина: 1) по команде — вы пишете «перенеси тендеры», я переношу новые; 2) по расписанию — рутина «Перенос тендеров в Notion» каждый час (гибко ±15 минут, Europe/Madrid), при отсутствии новых тендеров молчит. Что выбираете?"
+    options: [по команде, каждый час]
+    bot_does: 'по команде — рутину не создавать; каждый час — создать рутину последней (routines[0])'
+
+verification:
+  state_dir: /tmp/sysadmin_check                 # всё локально; Диск и база «Тендеры» только читаются
+  steps:
+    - cmd: python3 /home/box/sysadmin/scripts/notion_card.py /home/box/sysadmin/examples/0151100007126000034/input --summary
+      expect: 'прибыль 25 317,59 ₽ (вариант А), расходы 15 467,81 ₽, НМЦК 40 785,40 ₽; откуда — «Промышленная Площадка», ул. Николая Островского, 49 к.1'
+      duration: '< 1 с'
+    - cmd: rclone lsf 'gosplan:Госзакупки'
+      expect: 'виден К рассмотрению/. только чтение'
+    - cmd: |
+        mkdir -p /tmp/sysadmin_check && N=$(rclone lsf --dirs-only 'gosplan:Госзакупки/К рассмотрению' | head -1 | tr -d /) &&
+        rclone copy "gosplan:Госзакупки/К рассмотрению/$N" "/tmp/sysadmin_check/$N" --include 'tender.*' --include 'цены.md' &&
+        python3 /home/box/sysadmin/scripts/notion_card.py "/tmp/sysadmin_check/$N" --summary
+      expect: 'сводка по живому тендеру без ошибок (или «К рассмотрению» пуста — шаг пропустить)'
+      duration: '5–20 с'
+    - cmd: 'коннектор Notion: search «К рассмотрению», fetch базы «Тендеры»'
+      expect: 'страница и база найдены, свойства и раскладка как в notion_layout. нет — создать их (это и есть рабочая структура, не тест)'
+    - cmd: 'коннектор Notion (с разрешения owner_steps.test_card): create page «_проверка_сисадмина» в корне, тело — examples/0151100007126000034/card.md; fetch'
+      expect: 'страница открывается, разделы Главное … Заказчик и закупка на месте'
+  cleanup:
+    - cmd: 'коннектор Notion: delete pages «_проверка_сисадмина» (в корзину)'
+      note: 'только тестовая страница, созданная проверкой; базу «Тендеры» и её строки не трогать'
+    - rm -rf /tmp/sysadmin_check
+
+first_run:
+  preconditions:
+    - verification пройдена, cleanup сделан
+    - 'Notion подключён, страница «К рассмотрению» и база «Тендеры» есть'
+    - "rclone lsf 'gosplan:Госзакупки' — виден К рассмотрению/"
+    - 'владелец выбрал режим (owner_steps.choose_mode)'
+  notes:
+    - 'первый перенос: в «К рассмотрению» могут лежать несколько тендеров — карточки создаются по одному, с проверкой дублей'
+    - 'новых тендеров нет — молчит'
