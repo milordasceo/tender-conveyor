@@ -1,11 +1,13 @@
 # Установка Кузнеца с нуля
 
+Для человека. Бот-установщик идёт по `INSTALL_BY_BOT.md` и `bot.yaml`.
+
 Новый бокс Grok Bot. Цель: сканер в `/home/box/gosplan/scripts`, окружение в `/home/box/gosplan/.venv`, rclone-приёмник `gosplan:` на Google Drive с папкой «Госзакупки».
 
 ## 1. Бот
 
-1. Создать бота в Grok Bot. Имя, заголовок, описание — из `bot/profile.md`.
-2. В описании заменить agent id Смотрителя на id текущего Смотрителя.
+1. Создать бота в Grok Bot. Имя, заголовок, описание — из `bot.yaml`. Системный промт — весь файл `bot/prompt.md`.
+2. В промте заменить `<id Смотрителя>`, `<id Фатимы>`, `<id Скрипты и интеграции>` на agent id этих ботов.
 3. Рутину пока не создавать. Её создаёт владелец по `bot/routine.md` после проверки (шаг 8).
 
 ## 2. Скрипты
@@ -54,13 +56,20 @@ python3 -m venv /home/box/gosplan/.venv
 
 ## 6. Свой OAuth-клиент Google
 
-Общий client_id rclone выводится из оборота. Нужен свой.
+Общий client_id rclone выводится из оборота. Нужен свой. Два варианта.
 
-1. Google Cloud Console → новый проект.
+**Готовый клиент.** Сейчас клиент есть в другом Google-аккаунте (проект gosplan-rclone). Владелец даёт его client_id и client_secret как секреты. Приложение там в режиме Testing: вход истекает через 7 дней. Чтобы не истекал — OAuth consent screen → Publish app (homepage и privacy policy — `https://github.com/milordasceo/tender-conveyor`).
+
+**Новый клиент** в любом Google-аккаунте:
+
+1. Google Cloud Console → принять условия → новый проект.
 2. APIs & Services → Library → включить Google Drive API.
-3. OAuth consent screen: тип External. Заполнить имя, почту. Homepage: `https://github.com/milordasceo/tender-conveyor`. Privacy policy URL: тоже URL этого репозитория (или другая публичная страница).
-4. Publish app → In production. В режиме Testing токен живёт 7 дней.
-5. Credentials → Create credentials → OAuth client ID → Desktop app. Сохранить client_id и client_secret в `.env` (шаг 4). JSON клиента не коммитить.
+3. OAuth consent screen: тип External. Homepage и privacy policy: `https://github.com/milordasceo/tender-conveyor`.
+4. Publish app → In production.
+5. Credentials → Create credentials → OAuth client ID → Desktop app.
+6. client_id и client_secret — в `.env` (шаг 4). JSON клиента не коммитить.
+
+Аккаунт клиента и аккаунт Drive могут быть разными. Вход в rclone (шаг 7) — всегда аккаунтом Google, владеющим папкой «Госзакупки».
 
 ## 7. rclone
 
@@ -88,7 +97,9 @@ rclone config create gosplan drive scope=drive client_id=<CLIENT_ID> client_secr
 rclone lsd gosplan:Госзакупки
 ```
 
-Должны быть видны `Сток` и `Бланки`. `rclone.conf` (`~/.config/rclone/rclone.conf`) содержит токен — не коммитить.
+Должны быть видны `Сток` и `Бланки`. Есть — использовать как есть, не пересоздавать и не чистить. Нет — `rclone mkdir 'gosplan:Госзакупки/Сток'`, `rclone mkdir 'gosplan:Госзакупки/Бланки'`. Id папок нигде не записывать.
+
+Реестр выгрузки с репозиторием не едет. Если прежний Кузнец уже выгружал в этот «Сток» — перед первым прогоном положить его реестр или собрать новый из номеров: `INSTALL_BY_BOT.md`, шаг 7. Прежнего Кузнеца остановить. `rclone.conf` (`~/.config/rclone/rclone.conf`) содержит токен — не коммитить.
 
 ## 8. Проверка работы
 

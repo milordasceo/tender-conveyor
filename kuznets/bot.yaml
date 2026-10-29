@@ -1,0 +1,167 @@
+# манифест звена «Кузнец». схема — ../SCHEMA.md
+# пути repo — от корня репозитория. пути box — абсолютные на боксе Grok Bot.
+schema_version: 1
+link: kuznets
+order_hint: первое звено конвейера; вход — API gosplan.info, выход — «Госзакупки/Сток» для Фатимы
+docs:
+  readme: kuznets/README.md                   # роль, работа по шагам, особые случаи
+  install: kuznets/INSTALL_BY_BOT.md          # установка ботом, по шагам
+  setup: kuznets/SETUP.md                     # установка человеком
+  format: kuznets/FORMAT.md                   # формат папки тендера
+
+bot:
+  name: Кузнец
+  title: Сканер госзакупок — первое звено конвейера
+  description: Раз в сутки находит новые тендеры через gosplan.info и кладёт их папками в Google Drive «Госзакупки/Сток». Сопровождает сканер.
+  prompt_file: kuznets/bot/prompt.md          # весь файл = системный промт, вставлять как есть
+  placeholders:                               # заменить в prompt_file при создании
+    "<id Смотрителя>": {bot: Смотритель, note: подставить id при создании}
+    "<id Фатимы>": {bot: Фатима, note: подставить id при создании}
+    "<id Скрипты и интеграции>": {bot: Скрипты и интеграции, note: подставить id при создании}
+
+teammates:                                    # только по имени. id подставить при создании
+  - name: Смотритель
+    relation: 'надзиратель; получает отчёты Кузнеца и строки «владельцу:»'
+  - name: Фатима
+    relation: 'следующее звено; забирает папки из «Госзакупки/Сток»'
+  - name: Скрипты и интеграции
+    relation: 'исполнитель правок кода по заказу Кузнеца'
+  # бота ещё нет — оставить имя в промте, id дописать после его создания
+
+routines:
+  - name: Утренний скан госзакупок
+    cron: "0 7 * * *"
+    timezone: 'часовой пояс бокса (проверить `date`); на старом боксе Asia/Krasnoyarsk, UTC+7. время подтверждает владелец'
+    prompt_file: kuznets/bot/routine_prompt.md  # весь файл = промт рутины
+    enable: last                                # включать после verification и first_run.preconditions
+
+deploy:
+  - from: kuznets/scripts/gosplan_scanner.py
+    to: /home/box/gosplan/scripts/gosplan_scanner.py
+  - from: kuznets/scripts/gosplan_lib.py
+    to: /home/box/gosplan/scripts/gosplan_lib.py
+  - from: kuznets/scripts/config.novosibirsk.yaml
+    to: /home/box/gosplan/scripts/config.novosibirsk.yaml
+  - from: kuznets/scripts/config.example.yaml
+    to: /home/box/gosplan/scripts/config.example.yaml
+  - from: kuznets/scripts/README.md
+    to: /home/box/gosplan/scripts/README.md
+  # не создавать вручную: scripts/state, scripts/logs — сканер создаёт сам
+
+dependencies:
+  python:
+    min_version: "3.10"
+    venv: /home/box/gosplan/.venv
+    create: python3 -m venv /home/box/gosplan/.venv
+    packages: [pyyaml]
+    install: /home/box/gosplan/.venv/bin/pip install pyyaml
+  rclone:
+    version: "1.75.2"                          # проверенная версия; новее — допустимо
+    install: curl https://rclone.org/install.sh | sudo bash
+    check: rclone version
+    remote_name: gosplan
+
+config:
+  file: /home/box/gosplan/scripts/config.novosibirsk.yaml
+  current:
+    region: 54
+    delivery_city: Новосибирск                 # только пометка, не отсев
+    price_min: 30000
+    price_max: 150000
+    stage: 1
+    kinds: [zk, auction]
+    laws: [44, 223]
+    base_url: https://v2test.gosplan.info      # тест, без ключа
+  owner: Кузнец                                # параметры меняет только Кузнец
+
+secrets:                                       # просить у владельца. значения в репозиторий не писать
+  - name: GOOGLE_OAUTH_CLIENT_ID
+    required: true
+    purpose: 'свой OAuth-клиент Google (Desktop) для rclone'
+    store: '/home/box/gosplan/.env (chmod 600) и rclone.conf'
+    how: 'owner_steps.oauth_client'
+  - name: GOOGLE_OAUTH_CLIENT_SECRET
+    required: true
+    purpose: 'секрет того же OAuth-клиента'
+    store: '/home/box/gosplan/.env (chmod 600) и rclone.conf'
+    how: 'owner_steps.oauth_client'
+  - name: GOSPLAN_API_KEY
+    required: false
+    purpose: 'ключ прод-сервера v2.gosplan.info; без него работает тест v2test'
+    store: 'поле api_key в config.novosibirsk.yaml на боксе (сканер читает ключ только оттуда); base_url сменить на https://v2.gosplan.info'
+    how: 'владелец получает в t.me/gosplan_project'
+  - name: старый реестр выгрузки
+    required: false
+    purpose: 'не выгрузить повторно тендеры, которые прежний Кузнец уже положил в тот же «Сток»'
+    file: state/export_00cd167b09dc.json        # имя = sha1 строки 'gosplan:Госзакупки/Сток'[:12]
+    secret: false                               # только публичные номера тендеров
+    how: 'first_run.preconditions'
+
+connectors:
+  - name: Google Drive
+    required: true
+    account: аккаунт Google, владеющий папкой «Госзакупки»
+    purpose: 'проверить и создать раскладку drive_layout; смотреть «Сток»'
+  - name: GitHub
+    required: false
+    purpose: 'репозиторий публичный, хватает git clone'
+
+drive_layout:                                  # id папок не хардкодить
+  account: аккаунт Google, владеющий папкой «Госзакупки»
+  root: Госзакупки
+  folders: [Сток, Бланки]
+  rule: 'есть — использовать как есть; нет — создать. «Сток» не пересоздавать и не чистить'
+  rclone_paths:
+    stock: gosplan:Госзакупки/Сток
+    test: gosplan:Госзакупки/_проверка_кузнеца
+
+owner_steps:
+  oauth_client:
+    why: 'общий client_id rclone выводится из оборота; нужен свой OAuth-клиент'
+    options:
+      - id: existing
+        say: "Для Кузнеца нужен OAuth-клиент Google для rclone. Есть готовый (проект gosplan-rclone, в другом Google-аккаунте). Пришлите его client_id и client_secret как секреты. Учтите: приложение там в режиме Testing — вход истекает через 7 дней, пока его не опубликовать (OAuth consent screen → Publish app; homepage и privacy policy — https://github.com/milordasceo/tender-conveyor)."
+      - id: new
+        say: "Для Кузнеца нужен OAuth-клиент Google для rclone. Создайте его в любом Google-аккаунте: console.cloud.google.com → новый проект → APIs & Services → Library → Google Drive API → Enable; OAuth consent screen → External, homepage и privacy policy: https://github.com/milordasceo/tender-conveyor → Publish app (In production); Credentials → Create credentials → OAuth client ID → Desktop app. Пришлите client_id и client_secret как секреты."
+  google_cloud_terms:
+    say: "Google Cloud попросит принять условия использования при первом входе в консоль. Это делаете вы, я не могу."
+  rclone_authorize:
+    say: "Откройте мой рабочий стол (бокс) и войдите в Google аккаунтом, владеющим папкой «Госзакупки». Окно входа уже открыто. Нажмите «Разрешить». Если Google пишет, что приложение не проверено, — «Дополнительно» → «Перейти»."
+    bot_does: "rclone config create gosplan drive scope=drive client_id=$GOOGLE_OAUTH_CLIENT_ID client_secret=$GOOGLE_OAUTH_CLIENT_SECRET — в фоне; ссылку http://127.0.0.1:53682/auth?... из вывода открыть в браузере бокса; ждать завершения команды"
+  old_registry:
+    say: "Если прежний Кузнец уже выгружал тендеры в «Госзакупки/Сток», пришлите файл state/export_00cd167b09dc.json со старого бокса (там только номера тендеров) и остановите рутину прежнего Кузнеца. Если не выгружал — так и скажите."
+  confirm_schedule:
+    say: "Рутина «Утренний скан госзакупок»: каждый день в 07:00 по времени бокса (<часовой пояс>). Подтвердите или назовите другое время."
+
+verification:
+  state_dir: /tmp/kuznets_check                # временный реестр; боевой остаётся пустым
+  steps:
+    - cmd: rclone lsd gosplan:Госзакупки
+      expect: 'видны Сток и Бланки'
+    - cmd: cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_scanner.py -c config.novosibirsk.yaml --dry-run
+      expect: 'stdout "найдено: 0", "новых: 0", "выгружено: 0"; код 0; URL запросов в stderr'
+    - cmd: cd /home/box/gosplan/scripts && GOSPLAN_STATE_DIR=/tmp/kuznets_check ../.venv/bin/python gosplan_scanner.py -c config.novosibirsk.yaml --remote 'gosplan:Госзакупки/_проверка_кузнеца' --limit 1; echo "exit=$?"
+      expect: 'stdout "выгружено: 1"; exit=3 (в очереди остальные) или exit=0. "найдено: 0" — подходящих тендеров сейчас нет; только для проверки повторить с --price-max 1000000'
+      duration: 'до 30 минут (поиск по всем страницам при лимите API)'
+    - cmd: rclone lsf 'gosplan:Госзакупки/_проверка_кузнеца' --dirs-only
+      expect: 'одна папка <номер>/'
+    - cmd: rclone lsf 'gosplan:Госзакупки/_проверка_кузнеца/<номер>'
+      expect: 'tender.json и tender.md; формат — kuznets/FORMAT.md'
+  cleanup:
+    - rclone purge 'gosplan:Госзакупки/_проверка_кузнеца'
+    - rm -rf /tmp/kuznets_check
+    - cmd: ls /home/box/gosplan/scripts/state
+      expect: 'нет export_*.json (боевой реестр не тронут), если не положен старый реестр'
+
+first_run:
+  preconditions:
+    - verification пройдена, cleanup сделан
+    - «Сток» существующий не пересоздан
+    - старый реестр положен в /home/box/gosplan/scripts/state/ ИЛИ собран из номеров (INSTALL_BY_BOT.md, шаг 7) ИЛИ владелец подтвердил, что прежний Кузнец в этот «Сток» не выгружал
+    - рутина прежнего Кузнеца остановлена
+  notes:
+    - первый прогон берёт все подходящие тендеры (пустой last_completed_at = без фильтра даты публикации)
+    - тестовый API часто отвечает 429; ~80 тендеров шли ~45 минут
+    - код 3 = очередь не пуста; следующий запуск добирает её без нового поиска
+    - папки, которые уже лежат в «Сток», сканер не копирует повторно (rclone lsf перед выгрузкой), но тратит на них запрос API
+    - папки, которые Фатима уже унесла из «Сток», при пустом реестре выгрузятся снова
