@@ -135,7 +135,10 @@ notion_layout:                                   # id страниц, баз и 
     - {name: Предмет, type: rich_text, source: 'tender.json subject + количество'}
     - {name: Ссылка, type: url, source: 'tender.json url'}
     - {name: Чистая прибыль, type: formula, source: 'формула от «Прибыль» (см. profit_formula); не заполняется, считается сама'}
+    - {name: Дней до подачи, type: formula, source: 'формула от «Подача до» (см. days_left_formula); не заполняется, считается сама'}
   profit_formula: 'if(empty(prop("Прибыль")), "", style(replaceAll(replaceAll(replaceAll(format(prop("Прибыль")), "([0-9])([0-9]{3})([.]|$)", "$1 $2$3"), "([0-9])([0-9]{3}) ", "$1 $2 "), "[.]", ",") + " ₽", "b", "green", "green_background"))'
+  days_left_formula: 'if(empty(prop("Подача до")), empty(), dateBetween(prop("Подача до"), now(), "days"))'
+  view: {type: table, sort: 'Подача до ASC', rule: 'таблица «Тендеры» отсортирована по «Подача до» по возрастанию — сверху меньше всего дней до подачи; «Подача до» у каждой карточки обязательно; при создании базы сразу notion-update-view: SORT BY "Подача до" ASC', columns: [Номер тендера, Подача до, Дней до подачи, '2ГИС: куда', '2ГИС: откуда', Город, Категория, Количество поставок, Куда везти, Откуда забирать, Полная цена, Предмет, Прибыль, Расходы, Ссылка, Чистая прибыль]}
   profit_formula_note: 'прибыль в рублях жирным, зелёный текст на зелёной подложке (25 317,59 ₽) — чтобы бросалась в глаза в карточке на телефоне. number-свойства Notion стилизовать нельзя, поэтому формула. «Прибыль» (number) остаётся в базе для сортировки и сумм, в шапке карточки скрыта'
   gis_link:
     format: 'https://2gis.ru/<город латиницей>/geo/<id здания в 2ГИС>'   # карточка здания, без ?stat=
@@ -153,7 +156,8 @@ notion_layout:                                   # id страниц, баз и 
     ADD COLUMN "Количество поставок" RICH_TEXT; ADD COLUMN "Откуда забирать" RICH_TEXT; ADD COLUMN "Куда везти" RICH_TEXT;
     ADD COLUMN "Подача до" DATE; ADD COLUMN "Предмет" RICH_TEXT; ADD COLUMN "Ссылка" URL;
     ADD COLUMN "2ГИС: откуда" URL; ADD COLUMN "2ГИС: куда" URL;
-    ADD COLUMN "Чистая прибыль" FORMULA('if(empty(prop("Прибыль")), "", style(replaceAll(replaceAll(replaceAll(format(prop("Прибыль")), "([0-9])([0-9]{3})([.]|$)", "$1 $2$3"), "([0-9])([0-9]{3}) ", "$1 $2 "), "[.]", ",") + " ₽", "b", "green", "green_background"))')
+    ADD COLUMN "Чистая прибыль" FORMULA('if(empty(prop("Прибыль")), "", style(replaceAll(replaceAll(replaceAll(format(prop("Прибыль")), "([0-9])([0-9]{3})([.]|$)", "$1 $2$3"), "([0-9])([0-9]{3}) ", "$1 $2 "), "[.]", ",") + " ₽", "b", "green", "green_background"))');
+    ADD COLUMN "Дней до подачи" FORMULA('if(empty(prop("Подача до")), empty(), dateBetween(prop("Подача до"), now(), "days"))')
   card_sections: [Главное, 'Особые условия (+ Особые пометки)', Сроки, Что поставляем, Где купить, Расчёт рентабельности, Заказчик и закупка]
   card_highlights: 'в начале «Главное» — зелёный callout (color green_bg, 💰) с жирной строкой «Чистая прибыль: <сумма> ₽»; в строке «Прибыль» сумма жирно на зелёной подложке. рядом с адресами в «Главное» (откуда, куда) и «Где купить» (каждый поставщик) — ссылка «📍 2ГИС». в Notion жирный хранится как <b>…</b>, не **…**: перед правкой страницы — fetch и брать текст как есть'
 
