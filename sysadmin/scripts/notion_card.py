@@ -23,6 +23,10 @@ https://2gis.ru/<город>/search/<адрес> (и предупреждени�
   --offline        — в сеть не ходить (id только из --gis-ids, иначе ссылка-поиск);
   --gis-ids FILE   — JSON {"адрес": "id"} с уже известными id (пример — examples/…/2gis_ids.json).
 «Чистая прибыль» — свойство-формула базы, скрипт её не заполняет.
+Форматы терпимы к вариациям: строки расчёта жирные или нет («- **Прибыль варианта А:** X ₽»,
+«- Прибыль варианта А (по ценам А): X ₽», «Закупка: 700 × 59 = 41 300 ₽», ₽/руб.); суммы в tender.json —
+числом, строкой или объектом {"amount": …}; tender.json — вложенная схема (delivery/supply/conditions/deadline)
+или плоская (delivery_address, deliveries_count, application_deadline, links.zakupki_card, …).
 Только стандартная библиотека python 3.10+. Ничего не пишет; в сеть — только к 2gis.ru (кроме --offline).
 
 Пример:
@@ -40,7 +44,8 @@ import urllib.request
 from urllib.parse import quote
 
 VARIANTS = {"1": "А", "2": "Б", "3": "В"}
-NUM = r"(-?\d[\d\s\u00a0\u202f]*(?:[.,]\d+)?)"
+NUM = r"([-−–]?\d[\d\s\u00a0\u202f]*(?:[.,]\d+)?)"
+RUB = r"(?:₽|руб\.?|р\.)"
 
 ICONS = [
     (r"перчат", "🧤"), (r"бумаг|канцел|ручк|тетрад", "📎"), (r"мебел|стол|стул|шкаф", "🪑"),
@@ -218,47 +223,95 @@ def site_link(raw: str) -> str:
 
 
 def rub_to_float(s: str) -> float:
-    return float(re.sub(r"[\s\u00a0\u202f]", "", s).replace(",", "."))
+    return float(re.sub(r"[\s\u00a0\u202f]", "", s).replace(",", ".").replace("−", "-").replace("–", "-"))
 
 
-def fmt_rub(x: float) -> str:
+def money(x):
+    """Сумма из tender.json: число, строка «120 232,00 руб.» или объект {"amount"|"value"|"sum": …}; иначе None."""
+    if isinstance(x, dict):
+        x = next((x[k] for k in ("amount", "value", "sum", "total") if x.get(k) is not None), None)
+    if isinstance(x, bool):
+        return None
+    if isinstance(x, (int, float)):
+        return x
+    if isinstance(x, str):
+        m = re.search(NUM, x)
+        if m:
+            try:
+                return rub_to_float(m.group(1).strip())
+            except ValueError:
+                return None
+    return None
+
+
+def as_dict(x) -> dict:
+    return x if isinstance(x, dict) else {}
+
+
+def first(*vals):
+    """Первое непустое значение (не None и не пустая строка/список)."""
+    return next((v for v in vals if v not in (None, "", [], {})), None)
+
+
+def fmt_rub(x) -> str:
+    x = money(x)
+    if x is None:
+        return "—"
     s = f"{x:,.2f}".replace(",", " ").replace(".", ",")
     return f"{s} ₽"
 
 
+_CALC_HEAD = re.compile(r"^(#{2,3})\s*Расч[её]т\s+рентабельности.*$", re.M | re.I)
+_VAR_HEAD = re.compile(r"^(?:#{3,4}[ \t]*|(?:\*\*|__))Вариант[ \t]+([^\s*_:.,)]+)[.:)]?(.*)$", re.M)
+_CALC_LINES = {
+    "purchase": r"Закуп",
+    "delivery": r"(?:Доставка|Логистика|Перевозка)",
+    "tax": r"(?:Налог|УСН)",
+    "profit": r"(?:Чистая\s+)?Прибыль",
+}
+
+
+def calc_grab(label: str, body: str):
+    """Сумма из строки «- [**]Метка …: [**]X ₽[**] [(пояснение)]»: маркер списка и жирный — по желанию,
+    перед суммой «:» или «=» (берётся последняя сумма строки, после которой ₽/руб. и конец строки)."""
+    g = re.search(r"^[ \t]*(?:\*\*|__)?[ \t]*(?:[-*+][ \t]+)?(?:\*\*|__)?[ \t]*" + label + r"[^\n]*?[:=][ \t]*(?:\*\*|__)?[ \t]*"
+                  + NUM + r"[ \t]*" + RUB + r"[ \t]*(?:\*\*|__)?[ \t]*(?:\([^()\n]*\))?[ \t]*\.?[ \t]*$",
+                  body, re.M | re.I)
+    return rub_to_float(g.group(1).strip()) if g else None
+
+
 def parse_calc(md: str) -> dict:
     """Варианты из раздела «Расчёт рентабельности» tender.md."""
-    m = re.search(r"^## Расчёт рентабельности.*$", md, re.M)
+    m = _CALC_HEAD.search(md)
     if not m:
         raise SystemExit("в tender.md нет раздела «Расчёт рентабельности»")
     calc = md[m.start():]
-    nxt = re.search(r"^## (?!Расчёт рентабельности)", calc[3:], re.M)
+    nxt = re.search(rf"^#{{1,{len(m.group(1))}}}\s", calc[m.end() - m.start():], re.M)
     if nxt:
-        calc = calc[: nxt.start() + 3]
-    variants = {}
-    for vm in re.finditer(r"^### Вариант (\S+)(.*)$", calc, re.M):
-        name = vm.group(1)
+        calc = calc[: m.end() - m.start() + nxt.start()]
+    heads = list(_VAR_HEAD.finditer(calc))
+    blocks = []
+    for vm in heads:
         body = calc[vm.end():]
-        stop = re.search(r"^(###|\*\*Вердикт)", body, re.M)
-        body = body[: stop.start()] if stop else body
-
-        def grab(pattern):
-            g = re.search(pattern + r"[^\n]*?:\**\s*" + NUM + r"\s*₽\s*$", body, re.M | re.I)
-            return rub_to_float(g.group(1)) if g else None
-
-        v = {
-            "purchase": grab(r"^-\s*Закупка"),
-            "delivery": grab(r"^-\s*Доставка"),
-            "tax": grab(r"^-\s*Налог"),
-            "profit": grab(r"^-\s*\*\*Прибыль варианта"),
-            "title": vm.group(2).strip(),
-        }
+        stop = re.search(r"^(?:#{1,4}\s|#{3}|[ \t]*(?:\*\*|__)?Вердикт|(?:\*\*|__)Вариант\s)", body, re.M)
+        blocks.append((vm.group(1), re.sub(r"[*_]+\s*$", "", vm.group(2)).strip(),
+                       body[: stop.start()] if stop else body))
+    if not heads:                                       # расчёт без вариантов — один вариант «А»
+        blocks.append(("А", "", calc[m.end() - m.start():]))
+    variants = {}
+    for name, title, body in blocks:
+        v = {k: calc_grab(lab, body) for k, lab in _CALC_LINES.items()}
+        v["title"] = title
         if v["profit"] is None:
             continue
-        variants[name] = v
+        variants.setdefault(name, v)
     if not variants:
         raise SystemExit("в разделе «Расчёт рентабельности» нет строк «Прибыль варианта X»")
     return {"text": calc.rstrip(), "variants": variants}
+
+
+_PRICE_HEAD = re.compile(r"^(?:#{3,4}[ \t]*)?(?:\*\*|__)?Цена[ \t]+(\d+|[АБВ])[ \t]*(?:\*\*|__)?[ \t]*[:—–-]"
+                         r"[ \t]*(?:\*\*|__)?[ \t]*(.+?)[ \t]*(?:\*\*|__)?[ \t]*$", re.M)
 
 
 def parse_prices(md: str) -> list:
@@ -267,10 +320,10 @@ def parse_prices(md: str) -> list:
     for sec in re.split(r"^## ", md, flags=re.M)[1:]:
         title, _, body = sec.partition("\n")
         item = {"title": title.strip(), "variants": {}}
-        for pm in re.finditer(r"^\*\*Цена (\d+):\s*(.+?)\*\*\s*$", body, re.M):
+        for pm in _PRICE_HEAD.finditer(body):
             v = VARIANTS.get(pm.group(1), pm.group(1))
             rest = body[pm.end():]
-            stop = re.search(r"^\*\*Цена \d+", rest, re.M)
+            stop = _PRICE_HEAD.search(rest)
             rest = rest[: stop.start()] if stop else rest
             info = {"price": pm.group(2).strip()}
             for key, label in (("supplier", "Где купить"), ("phone", "Телефон"),
@@ -295,11 +348,145 @@ def short_subject(subject: str) -> str:
 
 
 def num(x) -> str:
-    return f"{x:g}" if isinstance(x, (int, float)) else str(x)
+    if isinstance(x, dict):
+        x = first(x.get("value"), x.get("amount"), "")
+    return f"{x:g}" if isinstance(x, (int, float)) and not isinstance(x, bool) else str(x)
+
+
+# города для часового пояса, если в tender.json нет готового ISO-срока
+_TZ = {"москв": 3, "мск": 3, "санкт-петербург": 3, "казан": 3, "екатеринбург": 5, "челябинск": 5,
+       "тюмен": 5, "омск": 6, "новосибирск": 7, "томск": 7, "барнаул": 7, "кемеров": 7, "новокузнецк": 7,
+       "бердск": 7, "искитим": 7, "красноярск": 7, "иркутск": 8}
+
+
+def parse_deadline(dl, city: str = "") -> dict:
+    """Срок подачи: объект {local, timezone, iso} как есть; строка «26.11.2026 08:00 (время Новосибирска)» →
+    {local, timezone, iso}; пояс — UTC±N, МСК±N или город (_TZ); не понятен — iso без смещения."""
+    if isinstance(dl, dict):
+        return dl
+    if not isinstance(dl, str) or not dl.strip():
+        return {}
+    m = re.search(r"(\d{2})\.(\d{2})\.(\d{4})(?:[ \tT,]+(\d{1,2}):(\d{2}))?", dl)
+    if not m:
+        m2 = re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", dl.strip())
+        return {"local": dl.strip(), "iso": dl.strip()} if m2 else {"local": dl.strip()}
+    dd, mm, yy, hh, mi = m.groups()
+    hh, mi = int(hh or 0), int(mi or 0)
+    tz_text = dl[m.end():].strip(" ()")
+    off = None
+    u = re.search(r"(?:UTC|GMT)\s*([+\-−]\d{1,2})", tz_text, re.I)
+    k = re.search(r"МСК\s*([+\-−]\s*\d{1,2})?", tz_text, re.I)
+    if u:
+        off = int(u.group(1).replace("−", "-"))
+    elif k:
+        off = 3 + (int(re.sub(r"\s", "", k.group(1)).replace("−", "-")) if k.group(1) else 0)
+    else:
+        low = (tz_text + " " + (city if not tz_text else "")).lower()
+        off = next((v for c, v in _TZ.items() if c in low), None)
+    iso = f"{yy}-{mm}-{dd}T{hh:02d}:{mi:02d}:00"
+    if off is not None:
+        iso += f"{'+' if off >= 0 else '-'}{abs(off):02d}:00"
+    else:
+        print(f"срок подачи: часовой пояс не понят ({dl}) — ISO без смещения", file=sys.stderr)
+    out = {"local": dl[: m.end()].strip(), "iso": iso}
+    if tz_text:
+        out["timezone"] = tz_text
+    return out
+
+
+def city_of(*texts) -> str:
+    """Город из адреса («г. Новосибирск») или из «location» («Новосибирск (в городе)»)."""
+    for t in texts:
+        if not isinstance(t, str) or not t:
+            continue
+        m = re.search(r"(?<![\w.])г\.\s*([А-ЯЁ][\w-]+(?:[ -][А-ЯЁ][\w-]+)?)", t)
+        if m:
+            return m.group(1)
+    for t in texts:
+        if isinstance(t, str) and t:
+            m = re.match(r"\s*([А-ЯЁ][\w-]+)\s*(?:\(|$)", t)
+            if m:
+                return m.group(1)
+    return ""
+
+
+def normalize(tj: dict, folder: Path) -> dict:
+    """tender.json любой из встречавшихся схем → вложенная схема (как в examples/0151100007126000034).
+    Готовые поля не трогаются: для вложенной схемы результат совпадает с входом."""
+    t = dict(tj)
+    t["number"] = str(first(tj.get("number"), tj.get("reg_number"), folder.resolve().name))
+    links = as_dict(tj.get("links"))
+    t["url"] = first(tj.get("url"), links.get("zakupki_card"), links.get("zakupki"), links.get("eis"))
+    t["method"] = first(tj.get("method"), tj.get("procedure"))
+    t["nmck"] = {"amount": money(tj.get("nmck"))}
+
+    d = dict(as_dict(tj.get("delivery")))
+    if isinstance(tj.get("delivery"), str):
+        d.setdefault("address", tj["delivery"])
+    if not d.get("address") and tj.get("delivery_address"):
+        d["address"] = tj["delivery_address"]
+    if not d.get("address_notice") and tj.get("delivery_address_notice"):
+        d["address_notice"] = tj["delivery_address_notice"]
+    if not d.get("city"):
+        c = first(tj.get("city"), city_of(d.get("address"), d.get("address_notice"), tj.get("location")))
+        if c:
+            d["city"] = c
+    if not d.get("map_url") and tj.get("map_url"):
+        d["map_url"] = tj["map_url"]
+    t["delivery"] = d
+
+    sp = dict(as_dict(tj.get("supply")))
+    for key, alts in (("deliveries_count", ("deliveries_count",)), ("schedule", ("deliveries_note", "schedule")),
+                      ("terms", ("delivery_terms", "terms")), ("contract_period", ("contract_term", "contract_period")),
+                      ("payment", ("payment", "payment_terms"))):
+        if sp.get(key) in (None, ""):
+            v = first(*(tj.get(a) for a in alts))
+            if v is not None:
+                sp[key] = v
+    t["supply"] = sp
+
+    c = dict(as_dict(tj.get("conditions")))
+    for key, alts in (("application_security", ("application_security", "bid_security")),
+                      ("contract_security", ("contract_security",)),
+                      ("warranty_security", ("warranty_security",)),
+                      ("national_regime", ("national_regime",)), ("smp_sono", ("smp_sono",)),
+                      ("licenses_permits", ("licenses_permits",)), ("experience", ("experience",))):
+        if c.get(key) in (None, ""):
+            v = first(*(tj.get(a) for a in alts))
+            if v is not None:
+                c[key] = v
+    if c.get("participant_requirements") in (None, "") and tj.get("special_conditions"):
+        sc = tj["special_conditions"]
+        c["participant_requirements"] = "; ".join(map(str, sc)) if isinstance(sc, list) else str(sc)
+    t["conditions"] = c
+
+    t["deadline"] = parse_deadline(first(tj.get("deadline"), tj.get("application_deadline")), d.get("city", ""))
+    t["customer"] = as_dict(tj.get("customer")) or ({"name": tj["customer"]} if isinstance(tj.get("customer"), str) else {})
+    sn = tj.get("special_notes")
+    t["special_notes"] = sn if isinstance(sn, list) else ([sn] if sn else [])
+
+    items = []
+    for it in tj.get("items") or []:
+        it = dict(it)
+        if it.get("total_price") is None and it.get("total") is not None:
+            it["total_price"] = it["total"]
+        code = it.get("code")
+        if code and not it.get("ktru") and not it.get("okpd2"):
+            it["ktru" if "-" in str(code) else "okpd2"] = code
+        if "analog_allowed" not in it and it.get("analog") is not None:
+            a = it["analog"]
+            if isinstance(a, bool):
+                it["analog_allowed"] = a
+            else:
+                it["analog_allowed"] = not re.match(r"\s*(?:нет|не\b|не\s|запрещ)", str(a), re.I)
+                it.setdefault("analog_note", str(a))
+        items.append(it)
+    t["items"] = items
+    return t
 
 
 def build(folder: Path, drive_path: str | None):
-    tj = json.loads((folder / "tender.json").read_text(encoding="utf-8"))
+    tj = normalize(json.loads((folder / "tender.json").read_text(encoding="utf-8")), folder)
     calc = parse_calc((folder / "tender.md").read_text(encoding="utf-8"))
     prices_file = folder / "цены.md"
     prices = parse_prices(prices_file.read_text(encoding="utf-8")) if prices_file.exists() else []
@@ -307,6 +494,9 @@ def build(folder: Path, drive_path: str | None):
     best_name, best = max(calc["variants"].items(), key=lambda kv: kv[1]["profit"])
     parts = [best[k] for k in ("purchase", "delivery", "tax")]
     expenses = round(sum(p for p in parts if p is not None), 2) if all(p is not None for p in parts) else None
+    nmck = money(tj.get("nmck"))
+    if expenses is None and nmck is not None:            # строк закупки/доставки/налога нет — НМЦК − прибыль
+        expenses = round(nmck - best["profit"], 2)
 
     sources, first_supplier, first_gis = [], None, None
     for it in prices:
@@ -338,7 +528,7 @@ def build(folder: Path, drive_path: str | None):
 
     props = {
         "Номер тендера": tj["number"],
-        "Полная цена": tj.get("nmck", {}).get("amount"),
+        "Полная цена": nmck,
         "Прибыль": best["profit"],
         "Расходы": expenses,
         "Город": d.get("city"),
@@ -362,7 +552,7 @@ def build(folder: Path, drive_path: str | None):
 def card(ctx) -> str:
     tj, best, bn = ctx["tj"], ctx["best"], ctx["best_name"]
     c, s, d, cust = tj.get("conditions", {}), tj.get("supply", {}), tj.get("delivery", {}), tj.get("customer", {})
-    nm = tj.get("nmck", {}).get("amount")
+    nm = money(tj.get("nmck"))
     L = []
     L += ["## Главное",
           '<callout icon="💰" color="green_bg">',
@@ -374,7 +564,9 @@ def card(ctx) -> str:
     for other, v in ctx["calc"]["variants"].items():
         if other != bn:
             L.append(f"  - вариант {other}: {fmt_rub(v['profit'])}")
-    if ctx["expenses"] is not None:
+    if ctx["expenses"] is not None and None in (best["purchase"], best["delivery"], best["tax"]):
+        L.append(f"- **Расходы:** {fmt_rub(ctx['expenses'])} = НМЦК − прибыль")
+    elif ctx["expenses"] is not None:
         L.append(f"- **Расходы:** {fmt_rub(ctx['expenses'])} = закупка {fmt_rub(best['purchase'])} + доставка {fmt_rub(best['delivery'])} + налог {fmt_rub(best['tax'])}")
     L += [f"- **Количество поставок:** {s.get('deliveries_count', '—')}",
           f"- **Откуда забирать:** {ctx['pickup']}{gis_link(ctx['gis_from'])}",
@@ -388,7 +580,7 @@ def card(ctx) -> str:
     for i, it in enumerate(tj.get("items", []), 1):
         a = "да" if it.get("analog_allowed") else "нет"
         note = f" — {it['analog_note']}" if it.get("analog_note") else ""
-        L.append(f"- **Аналог допускается{'' if len(tj['items']) == 1 else f' (позиция {i})'}:** {a}{note}")
+        L.append(f"- **Аналог допускается{'' if len(tj.get('items', [])) == 1 else f' (позиция {i})'}:** {a}{note}")
     L += [f"- **Обеспечение заявки:** {c.get('application_security', '—')}",
           f"- **Обеспечение контракта:** {c.get('contract_security', '—')}",
           f"- **Обеспечение гарантии:** {c.get('warranty_security', '—')}",
@@ -408,7 +600,8 @@ def card(ctx) -> str:
         L.append(f"### {i}. {it.get('name', '')}")
         L.append(f"- {num(it.get('quantity'))} {short_unit(it.get('unit'))} × {fmt_rub(it.get('unit_price', 0))} = {fmt_rub(it.get('total_price', 0))}")
         for ch in it.get("characteristics", []):
-            L.append(f"- {ch.get('name')}: {ch.get('value')}")
+            unit = f" {ch['unit']}" if ch.get("unit") else ""
+            L.append(f"- {ch.get('name')}: {ch.get('value')}{unit}")
         L.append(f"- ОКПД2: {it.get('okpd2', '—')}; КТРУ: {it.get('ktru', '—')}")
     L += ["", "## Где купить"]
     if not ctx["prices"]:
@@ -426,12 +619,12 @@ def card(ctx) -> str:
             if not info.get("link"):
                 L.append("  - сайт: нет в цены.md")
     calc_text = ctx["calc"]["text"]
-    calc_text = re.sub(r"^## Расчёт рентабельности.*$", "## Расчёт рентабельности", calc_text, count=1, flags=re.M)
+    calc_text = _CALC_HEAD.sub("## Расчёт рентабельности", calc_text, count=1)
     L += ["", calc_text, "",
           "## Заказчик и закупка",
           f"- **Заказчик:** {cust.get('name', '—')}" + (f" ({cust['short_name']})" if cust.get("short_name") else ""),
           f"- **ИНН:** {cust.get('inn', '—')}",
-          f"- **Адрес поставки (извещение):** {d.get('address_notice', '—')}",
+          f"- **Адрес поставки (извещение):** {d.get('address_notice') or d.get('address') or '—'}",
           f"- **Закон / способ:** {tj.get('law', '—')}, {tj.get('method', '—')}",
           f"- **Площадка:** {tj.get('platform', '—')}",
           f"- **Ссылка:** {tj.get('url', '—')}",

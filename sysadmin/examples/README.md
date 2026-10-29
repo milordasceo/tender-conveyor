@@ -14,3 +14,9 @@
 ```bash
 python3 ../scripts/notion_card.py 0151100007126000034/input --summary
 ```
+
+Вариации формата (нежирные строки расчёта, `nmck` числом/строкой/объектом, плоский `tender.json`):
+
+```bash
+python3 ../scripts/test_notion_card.py
+```
