@@ -9,7 +9,7 @@ cd /home/box/gosplan/scripts && ../.venv/bin/python gosplan_drain.py status
 cd /home/box/gosplan/scripts && ./drain_start.sh
 Второй копии не будет: скрипт сам проверяет блокировку. Запомни, что пришлось перезапускать (для отчёта ниже, если будет проблема).
 
-3. Реши, писать ли Смотрителю. Одно короткое сообщение, только в одном из случаев:
+3. Реши, писать ли Тэндер Мэну. Одно короткое сообщение, только в одном из случаев:
 - pending = 0, drain_status.state = "done" и drain_status.last_progress_at не старше часа (добор закончился за этот час) → «сток догружен: N тендеров» (N = exported_total). Так сообщение уходит один раз;
 - pending > 0, exported_last_hour = 0 и добор запущен больше часа назад (drain_status.started_at) — нет движения час → «добор стоит: pending N, ошибка: <drain_status.last_error>»;
 - в last_error есть 401, invalid_grant, token expired, unauthorized → добавь строку «владельцу: доступ rclone к Google Drive истёк, нужен повторный вход»;
