@@ -47,13 +47,14 @@
     },
     "delivery": {
       "type": "object",
-      "required": ["address", "address_notice", "city", "notes"],
+      "required": ["address", "address_notice", "city", "notes", "map_url"],
       "additionalProperties": false,
       "properties": {
         "address": {"type": "string", "minLength": 1, "description": "адрес поставки/оказания услуги из ТЗ или контракта"},
         "address_notice": {"type": "string", "minLength": 1, "description": "адрес из извещения дословно"},
         "city": {"type": "string", "minLength": 1, "description": "населённый пункт; по нему «В городе» / «Загород»"},
-        "notes": {"type": "string", "minLength": 1, "description": "условия доставки кратко: разгрузка, подъём, вывоз тары и т.п. Подробно — в special_notes"}
+        "notes": {"type": "string", "minLength": 1, "description": "условия доставки кратко: разгрузка, подъём, вывоз тары и т.п. Подробно — в special_notes"},
+        "map_url": {"type": "string", "pattern": "^https://2gis\\.ru/[a-z0-9-]+/(geo/[0-9]+|search/[^\\s?#]+)$", "description": "ссылка 2ГИС на адрес «куда привезти»: карточка здания https://2gis.ru/<город>/geo/<id>, не нашлось — https://2gis.ru/<город>/search/<адрес>. Без ?stat=. Заполняет dgis_link.py --tender; берёт CRM-бот Сисадмин"}
       }
     },
     "supply": {

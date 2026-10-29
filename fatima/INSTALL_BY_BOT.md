@@ -46,7 +46,7 @@ chmod 755 /home/box/fatima/scripts/*.py /home/box/fatima/scripts/selftest.sh
 
 Соответствие путей — `deploy`. `/home/box/fatima/{work,txt,backup,state}` уже есть — не затирать.
 
-КТ: `ls /home/box/fatima/scripts` — 8 файлов: `check_ready.py`, `counter.py`, `extract_text.py`, `render_md.py`, `README.md`, `selftest.sh`, `tender.schema.json`, `validate_tender.py`.
+КТ: `ls /home/box/fatima/scripts` — 9 файлов: `check_ready.py`, `counter.py`, `dgis_link.py`, `extract_text.py`, `render_md.py`, `README.md`, `selftest.sh`, `tender.schema.json`, `validate_tender.py`.
 
 ## 5. Зависимости
 

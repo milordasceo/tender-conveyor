@@ -4,6 +4,8 @@
 Запуск:
   python3 validate_tender.py <tender.json> [--folder-name <номер>]
 Ошибки (код 1) — файл не по схеме, заливать нельзя.
+Ссылка 2ГИС delivery.map_url обязательна (https://2gis.ru/<город>/geo/<id> или …/search/<адрес>,
+без ?stat=; заполняет dgis_link.py --tender); нет или не по шаблону — ошибка.
 Предупреждения (код 0) — перечитать документы: сумма позиций не равна НМЦК,
 категория расходится с условиями, пустые особые пометки при подъёме/разгрузке в условиях, «не указано» в важных полях и т.п.
 Без зависимостей: поддержано подмножество JSON Schema, которое использует схема
@@ -101,12 +103,39 @@ def sanity(d, folder_name):
     hint = " ".join([(d.get("delivery") or {}).get("notes") or "", (d.get("delivery") or {}).get("address_notice") or ""]).lower()
     if not notes and re.search(r"этаж|подъ[её]м|разгруз|монтаж|сборк|\bчас|время", hint):
         w.append("special_notes пусто, а в условиях доставки есть подъём/разгрузка/монтаж/время — перенести в особые пометки")
+    mu = (d.get("delivery") or {}).get("map_url") or ""
+    if "/search/" in mu:
+        w.append("delivery.map_url — запасная ссылка на поиск 2ГИС, id здания не найден: проверить адрес или запустить dgis_link.py --tender ещё раз")
     for path in ("nmck.amount", "delivery.address", "delivery.city", "deadline.local"):
         a, b = path.split(".")
         v = (d.get(a) or {}).get(b)
         if v is None or (isinstance(v, str) and v.strip().lower() == "не указано"):
             w.append(f"{path}: не указано — перечитать извещение")
     return w
+
+
+def map_url_errors(d):
+    """delivery.map_url: только https://2gis.ru/<город>/geo/<id> или …/search/<адрес>, город — из delivery.city."""
+    dl = d.get("delivery") if isinstance(d, dict) else None
+    mu = dl.get("map_url") if isinstance(dl, dict) else None
+    if not isinstance(mu, str) or not mu:
+        return []                                       # нет поля — уже ошибка схемы
+    e = []
+    if "?stat=" in mu or "?" in mu or "#" in mu:
+        e.append(f"$.delivery.map_url: {mu!r} — без ?stat= и параметров")
+    m = re.match(r"^https://2gis\.ru/([a-z0-9-]+)/(geo|search)/", mu)
+    if not m:
+        e.append(f"$.delivery.map_url: {mu!r} — нужна https://2gis.ru/<город>/geo/<id> или /search/<адрес>")
+    else:
+        try:
+            sys.path.insert(0, str(Path(__file__).parent))
+            from dgis_link import city_slug
+            want = city_slug(dl.get("city") or "")
+            if m.group(1) != want:
+                e.append(f"$.delivery.map_url: город {m.group(1)!r}, а delivery.city → {want!r}")
+        except ImportError:
+            pass
+    return e
 
 
 def main():
@@ -122,6 +151,7 @@ def main():
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     errs = []
     check(d, schema, "$", errs)
+    errs += map_url_errors(d)
     warns = sanity(d, a.folder_name) if isinstance(d, dict) and not errs else []
     for e in errs:
         print(f"ОШИБКА: {e}")

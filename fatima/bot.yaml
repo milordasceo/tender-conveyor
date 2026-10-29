@@ -26,7 +26,9 @@ teammates:                                      # только по имени
   - name: Тэндер Мэн
     relation: 'глава команды; единственный адресат сводок и проблем Фатимы (SendToAgent, <id Тэндер Мэна>). владельцу в чат Фатима не пишет'
   - name: Черри Пикер
-    relation: 'следующее звено (в промте Фатимы — «бот, который ищет цены»): забирает тендеры из «Цены/Новосибирск/В городе» и вычитает единицу в счётчике. связь только через папки и счётчик'
+    relation: 'следующее звено (в промте Фатимы — «бот, который ищет цены»): забирает тендеры из «Цены/Новосибирск/В городе» и вычитает единицу в счётчике; делает ссылки 2ГИС «откуда забрать». связь только через папки и счётчик'
+  - name: Сисадмин
+    relation: 'CRM-бот: берёт ссылку 2ГИС «куда везти» из tender.json delivery.map_url (правило ссылок — его sysadmin/scripts/notion_card.py)'
 
 routines:
   - name: Разбор тендеров из Бланков
@@ -44,6 +46,10 @@ deploy:
   - from: fatima/scripts/extract_text.py
     to: /home/box/fatima/scripts/extract_text.py
     mode: "755"
+  - from: fatima/scripts/dgis_link.py
+    to: /home/box/fatima/scripts/dgis_link.py
+    mode: "755"
+    note: 'ссылка 2ГИС на адрес «куда привезти» → tender.json delivery.map_url'
   - from: fatima/scripts/validate_tender.py
     to: /home/box/fatima/scripts/validate_tender.py
     mode: "755"
@@ -70,6 +76,10 @@ dependencies:
     min_version: "3.10"
     venv: 'не нужен: только стандартная библиотека'
     packages: []
+  network:
+    purpose: 'dgis_link.py: один GET https://2gis.ru/<город>/search/<адрес> на адрес доставки, браузерный User-Agent, без ключа API'
+    hosts: [2gis.ru]
+    check: 'bash selftest.sh — проверки 2ГИС офлайн (фейковый HTML)'
   libreoffice:
     purpose: '.doc, .rtf, .odt, .xls(x) → текст (soffice --headless)'
     install: 'sudo apt-get install -y libreoffice-writer libreoffice-calc'
@@ -93,6 +103,7 @@ config:
     restricted_rule: 'все тендеры с ограничениями — прямо в «С ограничениями», не в подпапки «Лицензии»/«Опыт»'
     special_notes: 'обязательное поле tender.json: подъём на этаж, разгрузка, часы доставки, сборка/монтаж и т.п.; нет — пустой массив, в tender.md «нет»'
     counter: gosplan:Госзакупки/Цены/Новосибирск/счётчик.json
+    map_url: 'обязательное поле tender.json delivery.map_url: ссылка 2ГИС только на адрес «куда привезти» — https://2gis.ru/<город>/geo/<id здания>, не нашлось — https://2gis.ru/<город>/search/<адрес>; без ?stat=. команда: python3 /home/box/fatima/scripts/dgis_link.py --tender /home/box/fatima/work/<номер>/tender.json. ссылки «откуда забрать» — Черри Пикер; Сисадмин берёт ссылку из delivery.map_url'
     counter_time_zone: Asia/Novosibirsk         # UTC+7, задано в counter.py, от часов бокса не зависит
   owner: 'владелец; правила категорий меняются только по его команде (правка bot/prompt.md)'
 

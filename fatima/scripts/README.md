@@ -8,11 +8,22 @@
 |---|---|---|---|
 | `check_ready.py` | готова ли папка: `docs_status.json` → `state == "done"`, `error == null`, у всех `documents[]` `status == "ok"`, файлы на месте | `check_ready.py <папка>...` или `rclone cat '.../docs_status.json' \| check_ready.py --status-file -` | 0 — все готовы, 1 — есть неготовые |
 | `extract_text.py` | тексты всех документов папки в `.txt` для чтения целиком | `extract_text.py <папка> --out /home/box/fatima/txt/<номер>` | 0 — всё извлечено, 1 — есть `error`/`empty` |
+| `dgis_link.py` | ссылка 2ГИС на адрес «куда привезти»: карточка здания `https://2gis.ru/<город>/geo/<id>`, не нашлось — `https://2gis.ru/<город>/search/<адрес>`; `--tender` пишет её в `delivery.map_url` | `dgis_link.py --tender tender.json` или `dgis_link.py --address '<адрес>' --city '<город>'` (`--offline`, `--html <файл>`, `--short`) | 0 — ссылка есть (geo или запасная), 2 — неверные аргументы/файл |
 | `tender.schema.json` | схема `tender.json` после разбора (schema_version 1) | — | — |
-| `validate_tender.py` | проверка `tender.json` по схеме + здравый смысл (сумма позиций = НМЦК, категория и лицензии/опыт, «не указано» в важных полях, пустые особые пометки при подъёме/разгрузке в условиях доставки) | `validate_tender.py tender.json --folder-name <номер>` | 0 — по схеме (предупреждения возможны), 1 — ошибки |
+| `validate_tender.py` | проверка `tender.json` по схеме + здравый смысл (`delivery.map_url` обязателен: https://2gis.ru/<город>/geo|search/…, без `?stat=`, город = `delivery.city`; запасная ссылка — предупреждение; сумма позиций = НМЦК, категория и лицензии/опыт, «не указано» в важных полях, пустые особые пометки при подъёме/разгрузке в условиях доставки) | `validate_tender.py tender.json --folder-name <номер>` | 0 — по схеме (предупреждения возможны), 1 — ошибки |
 | `render_md.py` | `tender.md` из `tender.json` | `render_md.py tender.json [-o tender.md]` | 0 |
 | `counter.py` | `счётчик.json`: `show`, `inc`, `count`, `init` | см. ниже | 0 — ок, 1 — отказ, 2 — неверные аргументы |
 | `selftest.sh` | самопроверка всех скриптов во временной папке, без rclone | `bash selftest.sh` | 0 — всё прошло |
+
+## Ссылка 2ГИС
+
+```bash
+python3 /home/box/fatima/scripts/dgis_link.py --tender /home/box/fatima/work/<номер>/tender.json   # рутина: после записи tender.json, до validate_tender.py
+python3 dgis_link.py --address '630027, г. Новосибирск, ул. Богдана Хмельницкого, д.104, этаж 7' --city Новосибирск
+# → https://2gis.ru/novosibirsk/geo/141373143524501
+```
+
+Только адрес «куда привезти» (`delivery.address`, нет — `address_notice`). Ссылки «откуда забрать» делает Черри Пикер; CRM-бот Сисадмин берёт ссылку из `delivery.map_url`. Правило — как в `sysadmin/scripts/notion_card.py`. Ссылка — карточка здания `https://2gis.ru/<город латиницей>/geo/<id здания>`, без `?stat=` (пример: https://2gis.ru/novosibirsk/geo/141373143524501 — ул. Богдана Хмельницкого, 104). Скрипт сокращает адрес до города, улицы и дома (без названия, индекса, офиса, этажа), делает один GET на `https://2gis.ru/<город>/search/<адрес>` с браузерным User-Agent (пауза ~1 с между адресами), берёт id из JSON `initialState` → `data.entity.profile`, только если найдено ровно одно здание и номер дома совпал. Иначе (не совпало, 404, нет сети) — запасная ссылка `https://2gis.ru/<город>/search/<адрес>`. В сеть — только `https://2gis.ru`; `--offline` и `--html` для проверки без сети (их использует `selftest.sh`).
 
 ## Счётчик
 

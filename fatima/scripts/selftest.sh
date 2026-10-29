@@ -115,6 +115,68 @@ P
 "$PY" "$HERE/validate_tender.py" "$T/lost.json" >"$T/out" 2>&1; c=$?
 [ $c = 0 ] && grep -q "special_notes пусто" "$T/out" && ok "validate: подъём в условиях, а пометок нет" || { bad "validate: пропавшие пометки"; cat "$T/out"; }
 
+# --- dgis_link.py (офлайн: фейковый HTML поиска 2ГИС, в сеть не ходит)
+G="$T/dgis"; mkdir -p "$G"
+"$PY" - "$G" <<'P'
+import json, sys
+g = sys.argv[1]
+def page(blds, path):
+    prof = {b["id"]: {"data": b} for b in blds}
+    state = json.dumps({"data": {"entity": {"profile": prof}}}, ensure_ascii=False)
+    state = state.replace('\\"', '\\\\"')                 # как в странице 2ГИС: JSON внутри JS-строки
+    open(f"{g}/{path}", "w", encoding="utf-8").write(
+        f"<html><script>var initialState = JSON.parse('{state}');</script></html>")
+b104 = {"id": "141373143524501", "type": "building", "name": "улица Богдана Хмельницкого, 104",
+        "address_name": "улица Богдана Хмельницкого, 104", "purpose_name": "Административное \"здание\""}
+page([b104], "one.html")
+page([b104, dict(b104, id="141373143500000")], "two.html")
+page([dict(b104, type="branch")], "firm.html")
+open(f"{g}/none.html", "w", encoding="utf-8").write("<html>museum</html>")
+P
+DG="$HERE/dgis_link.py"; A='630027, г. Новосибирск, ул. Богдана Хмельницкого, д.104, этаж 7'
+SRCH='https://2gis.ru/novosibirsk/search/%D0%B3.%20%D0%9D%D0%BE%D0%B2%D0%BE%D1%81%D0%B8%D0%B1%D0%B8%D1%80%D1%81%D0%BA%2C%20%D1%83%D0%BB.%20%D0%91%D0%BE%D0%B3%D0%B4%D0%B0%D0%BD%D0%B0%20%D0%A5%D0%BC%D0%B5%D0%BB%D1%8C%D0%BD%D0%B8%D1%86%D0%BA%D0%BE%D0%B3%D0%BE%2C%20%D0%B4.104'
+dg() { "$PY" "$DG" "$@" 2>/dev/null; }
+[ "$(dg --address "$A" --city Новосибирск --short)" = "г. Новосибирск, ул. Богдана Хмельницкого, д.104" ] \
+  && ok "dgis: сокращение адреса (индекс, этаж)" || bad "dgis: сокращение адреса"
+[ "$(dg --address 'ООО «Ромашка», 630099, Новосибирск, ул. Ленина, 1, офис 5, 2 этаж, тел. +7 383 000-00-00' --city Новосибирск --short)" = "г. Новосибирск, ул. Ленина, 1" ] \
+  && ok "dgis: сокращение адреса (название, офис, телефон)" || bad "dgis: сокращение адреса с названием"
+[ "$(dg --address 'Российская Федерация, обл. Новосибирская, г.о. город Новосибирск, г. Новосибирск, ул. Богдана Хмельницкого, зд. 104, с подъемом на 7 этаж' --city Новосибирск --short)" = "г. Новосибирск, ул. Богдана Хмельницкого, зд. 104" ] \
+  && ok "dgis: сокращение адреса из извещения" || bad "dgis: сокращение адреса из извещения"
+[ "$(dg --address "$A" --city Новосибирск --html "$G/one.html")" = "https://2gis.ru/novosibirsk/geo/141373143524501" ] \
+  && ok "dgis: initialState → geo/<id>" || bad "dgis: разбор initialState"
+[ "$(dg --address 'г. Новосибирск, ул. Богдана Хмельницкого, 105' --city Новосибирск --html "$G/one.html")" != "https://2gis.ru/novosibirsk/geo/141373143524501" ] \
+  && ok "dgis: дом не совпал — не geo" || bad "dgis: дом не совпал"
+for f in two firm none; do
+  [ "$(dg --address "$A" --city Новосибирск --html "$G/$f.html")" = "$SRCH" ] && ok "dgis: $f.html → запасная ссылка" || bad "dgis: $f.html"
+done
+[ "$(dg --address "$A" --city Новосибирск --offline)" = "$SRCH" ] && ok "dgis: --offline → запасная ссылка" || bad "dgis: --offline"
+"$PY" - "$EX" "$G/t.json" <<'P'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8")); del d["delivery"]["map_url"]
+json.dump(d, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+P
+expect "validate: нет delivery.map_url = код 1" 1 "$PY" "$HERE/validate_tender.py" "$G/t.json"
+expect "dgis: --tender заполняет map_url" 0 "$PY" "$DG" --tender "$G/t.json" --html "$G/one.html"
+"$PY" -c 'import json,sys; assert json.load(open(sys.argv[1]))["delivery"]["map_url"] == "https://2gis.ru/novosibirsk/geo/141373143524501"' "$G/t.json" \
+  && ok "dgis: delivery.map_url = geo" || bad "dgis: delivery.map_url"
+expect "validate: map_url после dgis_link" 0 "$PY" "$HERE/validate_tender.py" "$G/t.json" --folder-name 0151100007126000034
+"$PY" "$HERE/render_md.py" "$G/t.json" -o "$G/t.md" >/dev/null
+grep -qx -- "- 2ГИС: https://2gis.ru/novosibirsk/geo/141373143524501" "$G/t.md" && ok "render_md: строка 2ГИС" || bad "render_md: строка 2ГИС"
+cp "$G/t.json" "$G/s.json"
+expect "dgis: --tender --offline" 0 "$PY" "$DG" --tender "$G/s.json" --offline
+"$PY" "$HERE/validate_tender.py" "$G/s.json" >"$T/out" 2>&1; c=$?
+[ $c = 0 ] && grep -q "запасная ссылка" "$T/out" && ok "validate: запасная ссылка = предупреждение" || { bad "validate: запасная ссылка"; cat "$T/out"; }
+"$PY" - "$G/t.json" "$G" <<'P'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+for name, url in (("stat", "https://2gis.ru/novosibirsk/geo/141373143524501?stat=abc"),
+                  ("city", "https://2gis.ru/moscow/geo/141373143524501"),
+                  ("dgis", "dgis://2gis.ru/routeSearch"), ("http", "http://2gis.ru/novosibirsk/geo/1")):
+    d["delivery"]["map_url"] = url
+    json.dump(d, open(f"{sys.argv[2]}/bad_{name}.json", "w", encoding="utf-8"), ensure_ascii=False)
+P
+for f in stat city dgis http; do expect "validate: map_url $f = код 1" 1 "$PY" "$HERE/validate_tender.py" "$G/bad_$f.json"; done
+
 # --- counter.py
 C="$T/счётчик.json"
 printf '%s\n' "В городе/" "В городе/0151100007126000034/" "В городе/0151100007126000034/txt/" \
