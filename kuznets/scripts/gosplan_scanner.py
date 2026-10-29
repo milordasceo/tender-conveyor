@@ -10,7 +10,9 @@
 ###   [--city-strict] [--dry-run] [--region CODE] [--price-min N] [--price-max N] [--stage N]
 ###   [--types 44|223] [--kind auction|zk|ok|zp|ep]
 ###   [--deadline-from ДАТА] [--deadline-to ДАТА] [--since ДАТА|today|auto] [--no-export]
-###   без --since берётся filters.since, иначе auto. export.dir в конфиге включает выгрузку,
+###   без --since берётся filters.since, иначе auto. filters.deadline_from: now — только с открытой подачей.
+###   перед каждой выгрузкой срок подачи сверяется по свежей карточке: истёк — статус expired,
+###   нет даты — no_deadline (номер вернётся в очередь при следующем поиске). export.dir в конфиге включает выгрузку,
 ###   если не заданы --export, --collect и --no-export.
 ### ЗАВИСИМОСТИ: python 3.10+, pip install pyyaml. сеть: gosplan.info и zakupki.gov.ru
 ###   (для zakupki нужен российский CA «Russian Trusted Root CA» — см. runbooks).
@@ -70,17 +72,25 @@ def moscow_today():
     return datetime.now(MSK).date()
 
 
+def moscow_now():
+    # текущий момент по москве, naive, до секунды — в одной шкале с датами api
+    return datetime.now(MSK).replace(tzinfo=None, microsecond=0)
+
+
 def parse_moment(value):
-    # YYYY-MM-DD, iso datetime или «today» → date | datetime (naive = москва)
+    # YYYY-MM-DD, iso datetime, «today» или «now» → date | datetime (naive = москва)
+    # дата с поясом переводится в москву, затем пояс снимается
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
-        return value.replace(tzinfo=None) if value.tzinfo else value
+        return value.astimezone(MSK).replace(tzinfo=None) if value.tzinfo else value
     if isinstance(value, date) and not isinstance(value, datetime):
         return value
     s = str(value).strip()
     if s.lower() == "today":
         return moscow_today()
+    if s.lower() == "now":
+        return moscow_now()
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
     try:
@@ -89,7 +99,7 @@ def parse_moment(value):
                 return datetime.strptime(s, "%Y-%m-%d").date()
             dt = datetime.fromisoformat(s)
             if dt.tzinfo:
-                dt = dt.replace(tzinfo=None)
+                dt = dt.astimezone(MSK).replace(tzinfo=None)
             return dt
     except ValueError:
         pass
@@ -130,6 +140,15 @@ def moment_le(value, bound):
     if v is None:
         return False
     return v <= b
+
+
+def resolve_now_bounds(f):
+    # deadline_from/deadline_to: «now» фиксируется один раз на старте прогона (москва)
+    for key in ("deadline_from", "deadline_to"):
+        v = f.get(key)
+        if isinstance(v, str) and v.strip().lower() == "now":
+            f[key] = moscow_now().isoformat(timespec="seconds")
+    return f
 
 
 def arg_moment(s):
@@ -229,19 +248,51 @@ def keyword_ok(text, keywords, require_all):
     return len(hits) == len(keywords) if require_all else bool(hits)
 
 
-def client_deadline_ok(rec, f):
-    # повторная проверка окончания подачи: сервер мог проигнорировать фильтр
+def deadline_moment(raw):
+    # окончание подачи как naive-москва datetime; дата без времени — конец этого дня
+    m = parse_moment(raw)
+    if m is None:
+        return None
+    if not isinstance(m, datetime):
+        m = datetime.combine(m, dtime(23, 59, 59))
+    return m
+
+
+def detail_deadline(detail):
+    # окончание подачи из карточки api: 44-ФЗ collecting_finished_at, 223-ФЗ submission_close_at
+    d = detail if isinstance(detail, dict) else {}
+    return d.get("collecting_finished_at") or d.get("submission_close_at") or None
+
+
+def deadline_verdict(raw, now=None):
+    # "ok" — подача ещё идёт, "expired" — срок истёк, "no_deadline" — даты нет или не разобрать
+    try:
+        m = deadline_moment(raw)
+    except ValueError:
+        return "no_deadline"
+    if m is None:
+        return "no_deadline"
+    now = now or moscow_now()
+    return "ok" if m > now else "expired"
+
+
+def client_deadline_ok(rec, f, allow_missing=False):
+    # повторная проверка окончания подачи: сервер мог проигнорировать фильтр.
+    # allow_missing: запись без даты пропускаем дальше — дату возьмёт карточка перед выгрузкой
     d_from = f.get("deadline_from")
     d_to = f.get("deadline_to")
     if not d_from and not d_to:
         return True
     raw = rec.get("collecting_finished_at")
     if not raw:
-        return False
-    if d_from and not moment_ge(raw, d_from):
-        return False
-    if d_to and not moment_le(raw, d_to):
-        return False
+        return bool(allow_missing)
+    try:
+        if d_from and not moment_ge(raw, d_from):
+            return False
+        if d_to and not moment_le(raw, d_to):
+            return False
+    except ValueError:
+        return bool(allow_missing)
     return True
 
 
@@ -450,7 +501,7 @@ def export_payload(rec, detail, base_url, cities=None):
         "currency": rec.get("currency_code") or d.get("currency_code"),
         "region": rec.get("region") if rec.get("region") is not None else d.get("region"),
         "stage": rec.get("stage") if rec.get("stage") is not None else d.get("stage"),
-        "stage_end": rec.get("collecting_finished_at") or d.get("collecting_finished_at") or d.get("submission_close_at"),
+        "stage_end": detail_deadline(d) or rec.get("collecting_finished_at"),
         "published_at": rec.get("published_at") or d.get("published_at"),
         "customers": customers,
         "delivery_places": places,
@@ -689,9 +740,10 @@ def parse_args(argv=None):
     ap.add_argument("--types", action="append", default=None, metavar="LAW",
                     help="закон 44 и/или 223; можно повторять и через запятую (по умолчанию: sources из конфига)")
     ap.add_argument("--deadline-from", type=arg_moment, default=None, metavar="ДАТА",
-                    help="окончание подачи заявок с (YYYY-MM-DD или iso datetime); сервер+клиент")
+                    help="окончание подачи заявок с (YYYY-MM-DD, iso datetime или now); сервер+клиент. "
+                         "нет флага — filters.deadline_from")
     ap.add_argument("--deadline-to", type=arg_moment, default=None, metavar="ДАТА",
-                    help="окончание подачи заявок по (YYYY-MM-DD или iso datetime); сервер+клиент")
+                    help="окончание подачи заявок по (YYYY-MM-DD, iso datetime или now); сервер+клиент")
     ap.add_argument("--since", type=arg_moment, default=None, metavar="ДАТА",
                     help='дата публикации с: YYYY-MM-DD, iso, "today" или "auto" '
                          "(нет флага — filters.since, иначе auto)")
@@ -852,8 +904,15 @@ def finalize_since(f, args, reg, log):
     return day
 
 
+# no_deadline не окончательный: следующий поиск снова поставит номер в очередь и спросит карточку
+RETRYABLE_STATUSES = ("no_deadline",)
+
+
 def _fresh_candidates(all_norm, reg):
-    known = set(reg.get("tenders") or {})
+    known = {
+        num for num, entry in (reg.get("tenders") or {}).items()
+        if not (isinstance(entry, dict) and entry.get("status") in RETRYABLE_STATUSES)
+    }
     fresh = [
         r for r in all_norm
         if r.get("purchase_number") and r["purchase_number"] not in known
@@ -926,7 +985,7 @@ def drain_pending(reg, reg_path, f, base_url, api_key, timeout, pause_ms, log, l
             if remote_names is None:
                 log("rclone lsf не удался, выгрузка не начата")
                 log(f"pending: осталось {len(reg.get('pending') or [])}")
-                return 0, len(reg.get("pending") or []), True, 0
+                return 0, len(reg.get("pending") or []), True, 0, {"expired": [], "no_deadline": []}
         tmp_root = Path(state_dir or (HERE / "state")) / "tmp"
         tmp_root.mkdir(parents=True, exist_ok=True)
     else:
@@ -938,6 +997,7 @@ def drain_pending(reg, reg_path, f, base_url, api_key, timeout, pause_ms, log, l
     fail_streak = 0
     stopped = False
     rclone_failures = 0
+    skipped = {"expired": [], "no_deadline": []}
     idx = 0
     while idx < len(pending):
         if limit and limit > 0 and exported >= limit:
@@ -955,6 +1015,22 @@ def drain_pending(reg, reg_path, f, base_url, api_key, timeout, pause_ms, log, l
             verdict = city_verdict(rec, detail, cities)
             label, city_key = city_label(verdict, cities)
             now = datetime.now(MSK).isoformat(timespec="seconds")
+            # срок подачи: свежая карточка важнее записи очереди (очередь могла собраться вчера)
+            deadline_raw = detail_deadline(detail) or rec.get("collecting_finished_at")
+            dl = deadline_verdict(deadline_raw)
+            if dl != "ok":
+                if dl == "expired":
+                    log(f"{num}: срок подачи истёк ({deadline_raw}) — пропуск")
+                else:
+                    log(f"{num}: нет даты окончания подачи — пропуск, вернётся при следующем поиске")
+                reg["tenders"][num] = {"status": dl, "city": city_key, "at": now,
+                                       "deadline": deadline_raw or None}
+                skipped[dl].append(num)
+                pending.pop(idx)
+                reg["pending"] = pending
+                save_registry(reg_path, reg)
+                fail_streak = 0
+                continue
             if strict and verdict is False:
                 log(f"{num}: место поставки вне города ({', '.join(cities)}) — пропуск")
                 reg["tenders"][num] = {"status": "outside", "city": city_key, "at": now}
@@ -964,6 +1040,17 @@ def drain_pending(reg, reg_path, f, base_url, api_key, timeout, pause_ms, log, l
                 fail_streak = 0
                 continue
             data = export_payload(rec, detail, base_url, cities)
+            # последняя проверка срока прямо перед записью карточки и rclone copy
+            if deadline_verdict(deadline_raw) != "ok":
+                log(f"{num}: срок подачи истёк ({deadline_raw}) — пропуск")
+                reg["tenders"][num] = {"status": "expired", "city": city_key, "at": now,
+                                       "deadline": deadline_raw}
+                skipped["expired"].append(num)
+                pending.pop(idx)
+                reg["pending"] = pending
+                save_registry(reg_path, reg)
+                fail_streak = 0
+                continue
             if remote:
                 work = Path(tempfile.mkdtemp(dir=str(tmp_root)))
                 folder = work / num
@@ -1023,8 +1110,11 @@ def drain_pending(reg, reg_path, f, base_url, api_key, timeout, pause_ms, log, l
     if not pending and not stopped:
         reg["last_completed_at"] = reg.get("pending_since") or datetime.now(MSK).isoformat(timespec="seconds")
         save_registry(reg_path, reg)
+    if skipped["expired"] or skipped["no_deadline"]:
+        log(f"пропущено: срок подачи истёк — {len(skipped['expired'])}, "
+            f"нет даты окончания подачи — {len(skipped['no_deadline'])}")
     log(f"pending: осталось {len(pending)}")
-    return exported, len(pending), stopped, rclone_failures
+    return exported, len(pending), stopped, rclone_failures, skipped
 
 
 def write_run_report(state_dir, report):
@@ -1073,6 +1163,9 @@ def main(argv=None):
         resolve_run_options(cfg, args, cfg_path)
         f, sources = apply_cli_filters(f, sources, args)
         f, sources, skipped_sources = apply_purchase_kinds(cfg, f, sources, args.kind, cfg_path)
+        resolve_now_bounds(f)
+        for key in ("deadline_from", "deadline_to"):
+            parse_moment(f.get(key))
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
@@ -1135,6 +1228,8 @@ def main(argv=None):
         log(f"[{src}] получено записей: {len(raw)}")
         allowed_types = _codes_for_source(f, src)
         dropped_pt = 0
+        dropped_dl = 0
+        no_dl = 0
         for item in raw:
             rec = norm_record(item, src, base_url)
             if allowed_types is not None and rec.get("purchase_type") not in allowed_types:
@@ -1147,13 +1242,22 @@ def main(argv=None):
             if ((not exporting) or args.city_strict) and f.get("delivery_cities") and rec["delivery_places"]:
                 if not any(gp.city_match(p, c) for c in f["delivery_cities"] for p in rec["delivery_places"]):
                     continue
-            if not client_deadline_ok(rec, f):
+            if not client_deadline_ok(rec, f, allow_missing=True):
+                dropped_dl += 1
                 continue
             if not client_since_ok(rec, f):
                 continue
+            if not rec.get("collecting_finished_at"):
+                # дату окончания проверит карточка (в выгрузке и --collect); без неё не выгружаем
+                rec["deadline_missing"] = True
+                no_dl += 1
             all_norm.append(rec)
         if dropped_pt:
             log(f"[{src}] отсеяно по purchase_type: {dropped_pt}")
+        if dropped_dl:
+            log(f"[{src}] отсеяно по окончанию подачи: {dropped_dl}")
+        if no_dl:
+            log(f"[{src}] без даты окончания подачи в списке: {no_dl} — проверка по карточке перед выгрузкой")
         if pause_ms:
             time.sleep(pause_ms / 1000.0)
 
@@ -1174,7 +1278,7 @@ def main(argv=None):
             reg["pending"] = fresh
             reg["pending_since"] = search_started
             save_registry(reg_path, reg)
-        exported, pending_left, stopped, rclone_failures = drain_pending(
+        exported, pending_left, stopped, rclone_failures, skipped_dl = drain_pending(
             reg, reg_path, f, base_url, api_key, timeout, pause_ms, log,
             limit=args.limit or 0, strict=bool(args.city_strict),
             remote=args.remote, rclone=args.rclone, state_dir=state_dir,
@@ -1195,6 +1299,13 @@ def main(argv=None):
             "pending_left": pending_left,
             "http_429": gp.http_429_count(),
             "rclone_failures": rclone_failures,
+            # отказы по сроку подачи за этот прогон: «срок подачи истёк» и «нет даты окончания подачи»
+            "expired": len(skipped_dl["expired"]),
+            "no_deadline": len(skipped_dl["no_deadline"]),
+            "skipped_deadline": (
+                [{"number": n, "reason": "срок подачи истёк"} for n in skipped_dl["expired"]]
+                + [{"number": n, "reason": "нет даты окончания подачи"} for n in skipped_dl["no_deadline"]]
+            ),
             "completed": completed,
             "exit_code": exit_code,
         }
@@ -1223,7 +1334,8 @@ def main(argv=None):
             skipped += 1
             continue
         old = seen.get(key)
-        if old and (old.get("folder") or old.get("city_check") == "outside"):
+        if old and (old.get("folder") or old.get("city_check") == "outside"
+                    or old.get("deadline_check") == "expired"):
             skipped += 1
             continue
         if old is None:
@@ -1245,6 +1357,15 @@ def main(argv=None):
                 continue
             try:
                 detail = gp.fetch_detail(base_url, rec["source"], num, api_key, timeout, pause_ms, log)
+                deadline_raw = detail_deadline(detail) or rec.get("collecting_finished_at")
+                dl = deadline_verdict(deadline_raw)
+                if dl != "ok":
+                    reason = "срок подачи истёк" if dl == "expired" else "нет даты окончания подачи"
+                    log(f"{num}: {reason} ({deadline_raw or '—'}) — пропуск")
+                    seen[num]["deadline_check"] = dl
+                    save_seen(seen_path, seen)
+                    fail_streak = 0
+                    continue
                 verdict = gp.delivery_city_verdict(detail, f.get("delivery_cities") or [])
                 if verdict is False:
                     log(f"{num}: место поставки вне города ({', '.join(f.get('delivery_cities') or [])}) — пропуск")

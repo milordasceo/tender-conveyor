@@ -55,7 +55,7 @@ python gosplan_scanner.py -c config.novosibirsk.yaml --help
 | `--price-max N` | `filters.max_budget` | верхняя граница НМЦК, руб |
 | `--stage N` | `filters.stage` | этап `1`..`4` (1 — приём заявок); можно через запятую |
 | `--types LAW` | `filters.types`, иначе `sources` | `44` и/или `223`; можно повторять и через запятую. Коды процедур — `filters.purchase_types`, если не задан `--kind` |
-| `--deadline-from ДАТА` | `filters.deadline_from` | окончание подачи заявок **с** (`YYYY-MM-DD` или ISO datetime). На сервер: 44-ФЗ `collecting_finished_after`, 223-ФЗ `submission_close_after`. Повторная проверка на клиенте по нормализованному `collecting_finished_at`. Закупки без даты окончания отбрасываются |
+| `--deadline-from ДАТА` | `filters.deadline_from` (в конфигах `now`) | окончание подачи заявок **с** (`YYYY-MM-DD`, ISO datetime или `now` — момент запуска по Москве). На сервер: 44-ФЗ `collecting_finished_after`, 223-ФЗ `submission_close_after`. Повторная проверка на клиенте по нормализованному `collecting_finished_at`; запись списка без даты не отбрасывается, дату берёт карточка перед выгрузкой |
 | `--deadline-to ДАТА` | `filters.deadline_to` | то же **по** (`collecting_finished_before` / `submission_close_before`) |
 | `--since ДАТА` | `filters.since`, иначе `auto` | `auto`: пустой реестр — без фильтра публикации; иначе дата `last_completed_at` в `Europe/Moscow` минус 1 день. Явная дата и `today` перекрывают `auto`. Эффективное значение пишется в stderr |
 
@@ -98,10 +98,11 @@ python gosplan_scanner.py -c config.novosibirsk.yaml --help
 2. проверка города (`delivery_cities`): в файл пишется `city_check` — `в городе`, `вне города` или `нет данных` (если города в конфиге нет — `не проверялось`);
 3. без `--city-strict` выгрузить всех, в том числе вне города. В состоянии `status: exported` и `city`: `inside` / `outside` / `unknown`. Старые записи `status: outside` от строгого прогона в мягком режиме выгружаются сейчас;
 4. с `--city-strict` вне города не писать, в состоянии `status: outside`, в `--limit` не входят; такие же отсекаются по `delivery_places` ещё на списке;
-5. атомарно записать `DIR/<номер>/tender.json` и `tender.md` (`файл.tmp` + `os.replace`, до 5 попыток);
-6. ошибка API на одной закупке — в лог, в состояние не писать (повтор в следующем прогоне); после 5 сбоев подряд — стоп.
+5. срок подачи по свежей карточке (`collecting_finished_at` / `submission_close_at`, иначе дата из очереди; наивное время = Москва, дата без времени = конец дня), проверка прямо перед записью и `rclone copy`, в том числе при доборе очереди. Истёк — в лог «срок подачи истёк», `status: expired`, из очереди убирается навсегда. Даты нет — «нет даты окончания подачи», `status: no_deadline`, следующий поиск снова ставит номер в очередь. Оба не выгружаются, в `--limit` не входят, в `run_report.json` — счётчики `expired`, `no_deadline` и список `skipped_deadline`;
+6. атомарно записать `DIR/<номер>/tender.json` и `tender.md` (`файл.tmp` + `os.replace`, до 5 попыток);
+7. ошибка API на одной закупке — в лог, в состояние не писать (повтор в следующем прогоне); после 5 сбоев подряд — стоп.
 
-Идемпотентность решает только реестр `state_dir/export_<sha1 пути>[:12].json`, не наличие папки. В каталоге выгрузки остаются только папки номеров. Если там лежит старый `.export_state.json`, записи вливаются в реестр, файл удаляется. Повтор по уже решённому номеру (статус `exported` или `outside`) ничего не пишет. Непустой `pending` добирается без нового поиска. Пустой `pending` в конце прогона ставит `last_completed_at`. `--collect` город не ослабляет: вне города в `tenders/` не кладётся.
+Идемпотентность решает только реестр `state_dir/export_<sha1 пути>[:12].json`, не наличие папки. В каталоге выгрузки остаются только папки номеров. Если там лежит старый `.export_state.json`, записи вливаются в реестр, файл удаляется. Повтор по уже решённому номеру (статус `exported`, `outside` или `expired`) ничего не пишет; `no_deadline` повторяется. Непустой `pending` добирается без нового поиска. Пустой `pending` в конце прогона ставит `last_completed_at`. `--collect` город не ослабляет: вне города в `tenders/` не кладётся.
 
 `state_dir`: ключ конфига (путь от папки конфига), иначе `GOSPLAN_STATE_DIR`, иначе `scripts/state`. Каталог создаётся. Там же слот API и `run_report.json`.
 

@@ -36,7 +36,7 @@ filters:
   published_after: null                 # дата публикации "с", ISO 8601, напр. 2026-10-01T00:00:00+03:00
   published_before: null                # дата публикации "по"
   since: today                          # то же, что --since: today или YYYY-MM-DD; перекрывается флагом
-  deadline_from: null                   # окончание подачи заявок с, YYYY-MM-DD
+  deadline_from: now                    # окончание подачи заявок с: now (момент запуска, москва), YYYY-MM-DD или iso
   deadline_to: null                     # окончание подачи заявок по
   kinds: []                             # виды, как --kind: auction, zk, ok, zp, ep. пусто = не сужать
   types: []                             # законы 44 и/или 223; пусто = берётся sources
