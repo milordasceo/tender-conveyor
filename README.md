@@ -41,7 +41,7 @@
 
 | звено | манифест | установка ботом | описание |
 |---|---|---|---|
-| Тэндер Мэн | [bot.yaml](tender_man/bot.yaml) | **нет INSTALL_BY_BOT** — шаги в [README](tender_man/README.md) «Установка с нуля» + `bot.yaml` | [README](tender_man/README.md) |
+| Тэндер Мэн | [bot.yaml](tender_man/bot.yaml) | [INSTALL_BY_BOT](tender_man/INSTALL_BY_BOT.md) | [README](tender_man/README.md) |
 | Кузнец | [bot.yaml](kuznets/bot.yaml) | [INSTALL_BY_BOT](kuznets/INSTALL_BY_BOT.md) | [README](kuznets/README.md), [SETUP](kuznets/SETUP.md), [FORMAT](kuznets/FORMAT.md) |
 | загрузчик | — | — | [README](fatima/stock_docs_fetcher/README.md) |
 | Фатима | [bot.yaml](fatima/bot.yaml) | [INSTALL_BY_BOT](fatima/INSTALL_BY_BOT.md) | [README](fatima/README.md) |
@@ -75,7 +75,7 @@ ls /home/box/gosplan        # следы прежнего Кузнеца
 
 ### 1. Стать Тэндер Мэном
 
-1. Прочитать [tender_man/README.md](tender_man/README.md) и [tender_man/bot.yaml](tender_man/bot.yaml). INSTALL_BY_BOT у Тэндер Мэна нет.
+1. Идти по [tender_man/INSTALL_BY_BOT.md](tender_man/INSTALL_BY_BOT.md); значения — из [tender_man/bot.yaml](tender_man/bot.yaml), описание — [tender_man/README.md](tender_man/README.md).
 2. Имя, заголовок, описание — из `bot`. Системный промт — весь `tender_man/bot/prompt.md`.
 3. Плейсхолдеры звеньев пока оставить. Свой id записать: он `<id Тэндер Мэна>` во всех звеньях.
 4. Рутины отчётов пока не создавать.
@@ -92,6 +92,8 @@ ls /home/box/gosplan        # следы прежнего Кузнеца
 
 КТ: `rclone lsd gosplan:Госзакупки` показывает «Сток» и «Бланки»; проверка Кузнеца прошла; добор запущен.
 
+Добор (`gosplan_drain.py`, `drain_start.sh`) в репо есть, но на текущем общем box в `/home/box/gosplan/scripts` не развёрнут. На общем box развернуть его по `kuznets/INSTALL_BY_BOT.md` (шаг 4) до создания рутин Кузнеца.
+
 ### 3. Загрузчик на Windows-ПК владельца
 
 Делает владелец на своём ПК с Google Drive for desktop: [fatima/stock_docs_fetcher/README.md](fatima/stock_docs_fetcher/README.md) → `INSTALL.bat`, `STATUS.bat`, `TEST.bat`. Бот даёт инструкцию и ждёт подтверждения.
@@ -102,7 +104,8 @@ ls /home/box/gosplan        # следы прежнего Кузнеца
 
 По [fatima/INSTALL_BY_BOT.md](fatima/INSTALL_BY_BOT.md).
 
-- **Плейсхолдеры**: в `fatima/bot.yaml` `placeholders: {}`, но `fatima/bot/prompt.md` и `fatima/bot/routine_prompt.md` содержат `<id Тэндер Мэна>`. Заменить в обоих файлах. Проверка: `rg -n "<id "` по вставленным текстам — пусто.
+- **Плейсхолдер** `<id Тэндер Мэна>` (`fatima/bot.yaml` → `placeholders`) — в `fatima/bot/prompt.md` и `fatima/bot/routine_prompt.md`. Заменить в обоих. Проверка: `rg -n "<id "` по вставленным текстам — пусто.
+- Загрузчик ставит владелец (шаг 3). Фатима работает только из «Бланки», «Сток» не трогает.
 - rclone Фатима не создаёт; нет `gosplan:` — вернуться к шагу 2.
 
 ### 5. Черри Пикер
@@ -127,18 +130,18 @@ ls /home/box/gosplan        # следы прежнего Кузнеца
 
 ### 9. Рутины
 
-Единый часовой пояс рутин — **Asia/Novosibirsk** (`CRON_TZ=Asia/Novosibirsk …`), как у Тэндер Мэна, Сисадмина и счётчика Фатимы.
+Рутины конвейера — **Asia/Novosibirsk** (`CRON_TZ=Asia/Novosibirsk …`) у всех звеньев. Часовой пояс бокса Grok Bot на расписание рутин не влияет; на него не ориентироваться.
 
-| звено | рутина | в манифесте |
+| звено | рутина | расписание |
 |---|---|---|
-| Тэндер Мэн | отчёты 09:00, 21:00 | Asia/Novosibirsk; создаёт владелец |
-| Сисадмин | проверка «К рассмотрению» :00/:30; вечерний отчёт 21:00 | Asia/Novosibirsk |
-| Кузнец | утренний скан 07:00; почасовой добор | пояс бокса (`date`) |
-| Фатима | будни 08:00–19:30 каждые 30 мин | Europe/Berlin |
-| Черри Пикер | :00/:30 | Europe/Berlin |
-| Очкарик | каждые 30 мин | Europe/Madrid |
+| Тэндер Мэн | отчёты 09:00, 21:00 | `CRON_TZ=Asia/Novosibirsk 0 9 * * *`, `… 0 21 * * *`; создаёт владелец |
+| Кузнец | утренний скан 07:00; почасовая проверка добора | `CRON_TZ=Asia/Novosibirsk 0 7 * * *`, `… 0 * * * *`; только после развёртывания добора |
+| Фатима | будни 08:00–19:30 каждые 30 мин | `CRON_TZ=Asia/Novosibirsk 0,30 8-19 * * 1-5` |
+| Черри Пикер | :00/:30 | `CRON_TZ=Asia/Novosibirsk 0,30 * * * *` |
+| Очкарик | каждые 30 мин | `CRON_TZ=Asia/Novosibirsk */30 * * * *` |
+| Сисадмин | проверка «К рассмотрению» :00/:30; вечерний отчёт 21:00 | `CRON_TZ=Asia/Novosibirsk 0,30 * * * *`, `… 0 21 * * *` |
 
-У Кузнеца, Фатимы, Черри Пикера, Очкарика пояс в манифесте другой. Перед созданием их рутин — пересчитать время в Asia/Novosibirsk и подтвердить у владельца (`owner_steps.confirm_schedule` / `confirm_routine`). Для рутин каждые 30 минут и каждый час пояс на расписание не влияет.
+Окно Фатимы (будни 08:00–19:30) раньше было в Europe/Berlin; теперь по Новосибирску. Время утреннего скана Кузнеца и окно Фатимы подтверждает владелец (`owner_steps.confirm_schedule` / `confirm_routine`).
 
 ### 10. Отчёт владельцу
 
@@ -164,3 +167,23 @@ ls /home/box/gosplan        # следы прежнего Кузнеца
 - [ ] Notion подключён (Сисадмин — обязательно, Тэндер Мэн — по желанию);
 - [ ] `verification` каждого звена пройден;
 - [ ] рутины созданы последними, в Asia/Novosibirsk, время подтвердил владелец.
+
+## Статус аудита (29.10.2026)
+
+Закрыто в репозитории:
+
+- [x] `tender_man/INSTALL_BY_BOT.md`: пустой бот → Тэндер Мэн → звенья; `install` в `tender_man/bot.yaml`;
+- [x] прежнее имя главы в папках звеньев заменено на «Тэндер Мэн» (поиск по старому имени — пусто);
+- [x] плейсхолдеры Фатимы в `fatima/bot.yaml` (`<id Тэндер Мэна>`, промт и рутина);
+- [x] загрузчик: ставит владелец на Windows-ПК; Фатима работает только из «Бланки» (README Фатимы и этот файл);
+- [x] часовой пояс рутин во всех манифестах и README — Asia/Novosibirsk (`CRON_TZ`), без Berlin/Madrid и «пояса бокса»;
+- [x] статус добора Кузнеца: скрипты в репо, на общем box не развёрнуты.
+
+Осталось вручную (владелец):
+
+- [ ] поставить загрузчик `stock_docs_fetcher` на Windows-ПК (`INSTALL.bat`, `STATUS.bat`);
+- [ ] подставить реальные agent id вместо `<id …>` при создании ботов; создать или отменить бота «Скрипты и интеграции» (`<id Скрипты и интеграции>` у Кузнеца);
+- [ ] создать рутины (Тэндер Мэна — только владелец; остальные — по слову владельца), подтвердить время утреннего скана Кузнеца и окно Фатимы по Новосибирску;
+- [ ] развернуть добор Кузнеца на общем box и остановить прежние рутины/выгрузку;
+- [ ] подключить Notion (Сисадмин — обязательно);
+- [ ] полный прогон конвейера на новом аккаунте — **не проверен в репо**.
