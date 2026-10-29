@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/milordasceo/tender-conveyor/fatima/scripts/tender.schema.json",
+  "title": "tender.json после разбора Фатимой (schema_version 1)",
+  "description": "Чистая карточка тендера для CRM. Чего нет в документах — строка «не указано». Объекты закупки — дословно из документов.",
+  "type": "object",
+  "required": ["schema_version", "number", "url", "subject", "law", "method", "platform", "customer", "deadline", "nmck", "delivery", "supply", "conditions", "items", "category", "category_reason"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "number": {"type": "string", "pattern": "^[0-9]{6,}$", "description": "реестровый номер = имя папки"},
+    "url": {"type": "string", "pattern": "^https?://"},
+    "subject": {"type": "string", "minLength": 1, "description": "предмет закупки как в извещении"},
+    "law": {"type": "string", "minLength": 1, "description": "44-ФЗ / 223-ФЗ"},
+    "method": {"type": "string", "minLength": 1, "description": "способ: электронный аукцион, запрос котировок и т.п."},
+    "platform": {"type": "string", "minLength": 1, "description": "электронная площадка"},
+    "customer": {
+      "type": "object",
+      "required": ["name", "short_name", "inn"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "short_name": {"type": "string", "minLength": 1},
+        "inn": {"type": "string", "pattern": "^([0-9]{10}|[0-9]{12}|не указано)$"}
+      }
+    },
+    "deadline": {
+      "type": "object",
+      "required": ["local", "timezone", "iso"],
+      "additionalProperties": false,
+      "description": "окончание подачи заявок",
+      "properties": {
+        "local": {"type": "string", "minLength": 1, "description": "ДД.ММ.ГГГГ ЧЧ:ММ по времени из извещения"},
+        "timezone": {"type": "string", "minLength": 1, "description": "например «Новосибирск, UTC+7 (МСК+4)»"},
+        "iso": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2})?[+-][0-9]{2}:[0-9]{2}$"}
+      }
+    },
+    "nmck": {
+      "type": "object",
+      "required": ["amount", "currency"],
+      "additionalProperties": false,
+      "description": "начальная (максимальная) цена всего тендера",
+      "properties": {
+        "amount": {"type": ["number", "null"], "minimum": 0},
+        "currency": {"type": "string", "minLength": 3}
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "required": ["address", "address_notice", "city", "notes"],
+      "additionalProperties": false,
+      "properties": {
+        "address": {"type": "string", "minLength": 1, "description": "адрес поставки/оказания услуги из ТЗ или контракта"},
+        "address_notice": {"type": "string", "minLength": 1, "description": "адрес из извещения дословно"},
+        "city": {"type": "string", "minLength": 1, "description": "населённый пункт; по нему «В городе» / «Загород»"},
+        "notes": {"type": "string", "minLength": 1, "description": "разгрузка, подъём, вывоз тары и т.п."}
+      }
+    },
+    "supply": {
+      "type": "object",
+      "required": ["deliveries_count", "schedule", "terms", "contract_period", "payment"],
+      "additionalProperties": false,
+      "properties": {
+        "deliveries_count": {"type": "string", "minLength": 1, "description": "сколько поставок: «одна», «4 (поквартально)», «по заявкам»"},
+        "schedule": {"type": "string", "minLength": 1},
+        "terms": {"type": "string", "minLength": 1, "description": "сроки поставки"},
+        "contract_period": {"type": "string", "minLength": 1},
+        "payment": {"type": "string", "minLength": 1, "description": "срок оплаты, аванс"}
+      }
+    },
+    "conditions": {
+      "type": "object",
+      "required": ["licenses_permits", "experience", "participant_requirements", "smp_sono", "national_regime", "application_security", "contract_security", "warranty_security", "other"],
+      "additionalProperties": false,
+      "properties": {
+        "licenses_permits": {"type": "string", "minLength": 1, "description": "«не требуются» или какие именно"},
+        "experience": {"type": "string", "minLength": 1, "description": "«не требуется» или какой (доп. требования ч. 2 ст. 31 44-ФЗ и т.п.)"},
+        "participant_requirements": {"type": "string", "minLength": 1},
+        "smp_sono": {"type": "string", "minLength": 1},
+        "national_regime": {"type": "string", "minLength": 1},
+        "application_security": {"type": "string", "minLength": 1},
+        "contract_security": {"type": "string", "minLength": 1},
+        "warranty_security": {"type": "string", "minLength": 1},
+        "other": {"type": "string", "minLength": 1}
+      }
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "description": "все объекты закупки дословно из документов",
+      "items": {
+        "type": "object",
+        "required": ["name", "okpd2", "ktru", "characteristics", "quantity", "unit", "unit_price", "total_price", "analog_allowed", "analog_note"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "okpd2": {"type": "string", "minLength": 1},
+          "ktru": {"type": "string", "minLength": 1},
+          "characteristics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "value"],
+              "additionalProperties": false,
+              "properties": {
+                "name": {"type": "string", "minLength": 1},
+                "value": {"type": "string", "minLength": 1}
+              }
+            }
+          },
+          "quantity": {"type": ["number", "string"], "description": "число; строка — если в документах не число («по заявкам»)"},
+          "unit": {"type": "string", "minLength": 1},
+          "unit_price": {"type": ["number", "null"], "minimum": 0},
+          "total_price": {"type": ["number", "null"], "minimum": 0},
+          "analog_allowed": {"type": "boolean", "description": "true — документы прямо допускают эквивалент"},
+          "analog_note": {"type": "string", "minLength": 1, "description": "на чём основан вывод про аналог, цитатой"}
+        }
+      }
+    },
+    "category": {"enum": ["В городе", "Загород", "С ограничениями"]},
+    "category_reason": {"type": "string", "minLength": 1}
+  }
+}

@@ -1,0 +1,33 @@
+# Скрипты Фатимы
+
+Только стандартная библиотека Python 3.10+. Внешние программы: `soffice` (LibreOffice) для `.doc/.rtf/.odt/.xls(x)`, `pdftotext` (poppler-utils) для `.pdf`. С Google Диском скрипты не работают: файлы качает и заливает rclone (`gosplan:`), скрипты правят локальные копии.
+
+На боксе: `/home/box/fatima/scripts/`.
+
+| файл | что делает | запуск | код выхода |
+|---|---|---|---|
+| `check_ready.py` | готова ли папка: `docs_status.json` → `state == "done"`, `error == null`, у всех `documents[]` `status == "ok"`, файлы на месте | `check_ready.py <папка>...` или `rclone cat '.../docs_status.json' \| check_ready.py --status-file -` | 0 — все готовы, 1 — есть неготовые |
+| `extract_text.py` | тексты всех документов папки в `.txt` для чтения целиком | `extract_text.py <папка> --out /home/box/fatima/txt/<номер>` | 0 — всё извлечено, 1 — есть `error`/`empty` |
+| `tender.schema.json` | схема `tender.json` после разбора (schema_version 1) | — | — |
+| `validate_tender.py` | проверка `tender.json` по схеме + здравый смысл (сумма позиций = НМЦК, категория и лицензии/опыт, «не указано» в важных полях) | `validate_tender.py tender.json --folder-name <номер>` | 0 — по схеме (предупреждения возможны), 1 — ошибки |
+| `render_md.py` | `tender.md` из `tender.json` | `render_md.py tender.json [-o tender.md]` | 0 |
+| `counter.py` | `счётчик.json`: `show`, `inc`, `count`, `init` | см. ниже | 0 — ок, 1 — отказ, 2 — неверные аргументы |
+| `selftest.sh` | самопроверка всех скриптов во временной папке, без rclone | `bash selftest.sh` | 0 — всё прошло |
+
+## Счётчик
+
+```bash
+C=/home/box/fatima/state/счётчик.json
+R='gosplan:Госзакупки/Цены/Новосибирск'
+rclone copyto "$R/счётчик.json" "$C"                                  # скачать
+python3 counter.py inc "$C" 'В городе' --tz Europe/Berlin              # +1
+rclone copyto "$C" "$R/счётчик.json" && rclone cat "$R/счётчик.json"   # залить и проверить
+# файла на Диске нет — создать по текущим папкам (уже перенесённый тендер посчитан, +1 не нужен):
+rclone lsf -R --dirs-only "$R" | python3 counter.py init "$C" --tz Europe/Berlin
+```
+
+`count`/`init` считают папки, чьё имя — номер тендера (6+ цифр), по первой папке пути: «В городе», «Загород», «С ограничениями» (подпапки «Лицензии», «Опыт» входят в «С ограничениями»). Папки внутри папки тендера не считаются. `init` не затирает существующий файл без `--force`. `inc` не создаёт файл.
+
+## Проверено
+
+29.10.2026 на тендере 0151100007126000034 (4 `.doc`/`.docx` + печатная форма `.html`): `check_ready` → ready, `extract_text` → 5 из 5 ok за ~4 с, `validate_tender` → 0 ошибок, 0 предупреждений, `render_md` совпадает с ручным `tender.md` тестового прогона по содержанию. `selftest.sh` — всё прошло. Запись на Диск скриптами не проверялась (её делает rclone).

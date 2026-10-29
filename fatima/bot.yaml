@@ -1,0 +1,172 @@
+# манифест звена «Фатима». схема — ../SCHEMA.md
+# пути repo — от корня репозитория. пути box — абсолютные на боксе Grok Bot.
+schema_version: 1
+link: fatima
+order_hint: 'второе звено; вход — «Госзакупки/Бланки» (папки тендеров с документами), выход — «Госзакупки/Цены/Новосибирск/<категория>» и счётчик для бота, который ищет цены'
+docs:
+  readme: fatima/README.md                      # роль, порядок работы, особые случаи
+  install: fatima/INSTALL_BY_BOT.md             # установка ботом, по шагам
+  scripts: fatima/scripts/README.md             # скрипты и команды
+  schema: fatima/scripts/tender.schema.json     # схема tender.json после разбора
+  example: fatima/examples/0151100007126000034  # образец результата
+  fetcher: fatima/stock_docs_fetcher/README.md  # загрузчик документов Сток → Бланки (windows-пк, сопровождает Кузнец)
+
+bot:
+  name: Фатима
+  title: Документовед конвейера тендеров
+  description: Берёт из «Госзакупки/Бланки» тендеры с загруженными документами, читает все документы, переписывает tender.md и tender.json начисто для CRM и раскладывает папки в «Цены/Новосибирск» по категориям со счётчиком.
+  prompt_file: fatima/bot/prompt.md             # весь файл = системный промт, вставлять как есть
+  placeholders: {}                              # в промте нет id других ботов
+
+teammates:                                      # только по имени
+  - name: Кузнец
+    relation: 'первое звено: кладёт тендеры в «Сток»; настраивает rclone remote gosplan: на боксе; сопровождает загрузчик stock_docs_fetcher'
+  - name: бот, который ищет цены
+    relation: 'следующее звено: забирает тендеры из «Цены/Новосибирск/<категория>» и вычитает единицу в счётчике. имя бота владелец не назвал'
+
+routines:
+  - name: Разбор тендеров из Бланков
+    cron: "0,30 8-19 * * 1-5"                   # будни 08:00–19:30 каждые 30 минут
+    timezone: Europe/Berlin                     # часовой пояс владельца
+    timing: 'flexible, ±15 минут'
+    prompt_file: fatima/bot/routine_prompt.md   # весь файл = промт рутины, дословно
+    command: 'нет одной команды: рутина идёт по шагам системного промта (rclone + скрипты /home/box/fatima/scripts)'
+    enable: 'по команде владельца. на старом аккаунте рутина на паузе; после установки создать выключенной и включить, когда владелец скажет'
+
+deploy:
+  - from: fatima/scripts/check_ready.py
+    to: /home/box/fatima/scripts/check_ready.py
+    mode: "755"
+  - from: fatima/scripts/extract_text.py
+    to: /home/box/fatima/scripts/extract_text.py
+    mode: "755"
+  - from: fatima/scripts/validate_tender.py
+    to: /home/box/fatima/scripts/validate_tender.py
+    mode: "755"
+  - from: fatima/scripts/render_md.py
+    to: /home/box/fatima/scripts/render_md.py
+    mode: "755"
+  - from: fatima/scripts/counter.py
+    to: /home/box/fatima/scripts/counter.py
+    mode: "755"
+  - from: fatima/scripts/tender.schema.json
+    to: /home/box/fatima/scripts/tender.schema.json
+  - from: fatima/scripts/selftest.sh
+    to: /home/box/fatima/scripts/selftest.sh
+    mode: "755"
+  - from: fatima/scripts/README.md
+    to: /home/box/fatima/scripts/README.md
+  - from: fatima/examples/0151100007126000034
+    to: /home/box/fatima/examples/0151100007126000034
+    note: 'selftest.sh ищет образец в ../examples'
+  # рабочие папки создать пустыми: /home/box/fatima/{work,txt,backup,state}. уже есть — не затирать
+
+dependencies:
+  python:
+    min_version: "3.10"
+    venv: 'не нужен: только стандартная библиотека'
+    packages: []
+  libreoffice:
+    purpose: '.doc, .rtf, .odt, .xls(x) → текст (soffice --headless)'
+    install: 'sudo apt-get install -y libreoffice-writer libreoffice-calc'
+    check: soffice --version
+  poppler-utils:
+    purpose: '.pdf → текст (pdftotext)'
+    install: 'sudo apt-get install -y poppler-utils'
+    check: pdftotext -v
+  rclone:
+    version: "1.75.2"                            # как у Кузнеца; новее — допустимо
+    install: curl https://rclone.org/install.sh | sudo bash
+    check: rclone version
+    remote_name: gosplan
+    note: 'нужен rclone remote gosplan: с доступом к Drive. на новом аккаунте его настраивает Кузнец. конфиг rclone Фатима не читает и не трогает'
+
+config:
+  file: 'нет отдельного файла: правила — в bot/prompt.md'
+  current:
+    city: Новосибирск
+    categories: [В городе, Загород, С ограничениями]
+    restricted_subfolders: [Лицензии, Опыт]     # правило раскладки не задано; кладём в корень «С ограничениями»
+    counter: gosplan:Госзакупки/Цены/Новосибирск/счётчик.json
+    counter_time_zone: Europe/Berlin
+  owner: 'владелец; правила категорий меняются только по его команде (правка bot/prompt.md)'
+
+secrets: []                                     # своих секретов нет. доступ к Drive — общий rclone remote gosplan: (Кузнец)
+
+connectors:
+  - name: Google Drive
+    required: false
+    account: аккаунт Google, владеющий папкой «Госзакупки»
+    purpose: 'не обязателен: вся работа через rclone. можно смотреть раскладку глазами'
+
+drive_layout:                                   # id папок не хардкодить
+  account: аккаунт Google, владеющий папкой «Госзакупки»
+  root: Госзакупки
+  folders:
+    - Бланки                                    # вход (наполняет загрузчик)
+    - Цены/Новосибирск/В городе
+    - Цены/Новосибирск/Загород
+    - Цены/Новосибирск/С ограничениями
+    - Цены/Новосибирск/С ограничениями/Лицензии
+    - Цены/Новосибирск/С ограничениями/Опыт
+  not_touch: [Сток]
+  rule: 'есть — использовать как есть; нет — создать rclone mkdir (папки «Цены/...»). «Бланки» и «Сток» не создавать и не чистить: их ведут Кузнец и загрузчик'
+  rclone_paths:
+    blanki: gosplan:Госзакупки/Бланки
+    prices: gosplan:Госзакупки/Цены/Новосибирск
+    counter: gosplan:Госзакупки/Цены/Новосибирск/счётчик.json
+    test: gosplan:Госзакупки/_проверка_фатимы
+
+owner_steps:
+  rclone_ready:
+    why: 'Фатима работает через общий rclone remote gosplan:, его настраивает Кузнец'
+    say: "Для Фатимы нужен rclone remote gosplan: с доступом к Google Диску (папка «Госзакупки»). Его настраивает Кузнец. Подтвердите, что Кузнец уже установлен и вход rclone сделан, или попросите Кузнеца это сделать."
+    bot_does: 'проверка: rclone lsd gosplan:Госзакупки — видны Бланки и Цены. конфиг rclone не открывать'
+  confirm_routine:
+    say: "Рутина Фатимы «Разбор тендеров из Бланков»: по будням с 08:00 до 19:30 каждые 30 минут (±15 минут), Europe/Berlin. Она создана и выключена. Включить сейчас?"
+  restricted_subfolders:
+    say: "В «Цены/Новосибирск/С ограничениями» есть подпапки «Лицензии» и «Опыт». Пока я кладу такие тендеры в корень «С ограничениями». Скажите, если раскладывать по подпапкам и по какому правилу."
+
+verification:
+  state_dir: /tmp/fatima_check                  # всё локально; боевые папки Drive только читаются
+  test_remote: gosplan:Госзакупки/_проверка_фатимы
+  steps:
+    - cmd: bash /home/box/fatima/scripts/selftest.sh
+      expect: 'последняя строка «selftest: всё прошло», код 0. без rclone'
+      duration: '5–15 с'
+    - cmd: rclone lsd gosplan:Госзакупки
+      expect: 'видны Бланки и Цены (только чтение)'
+    - cmd: rclone lsf -R --dirs-only 'gosplan:Госзакупки/Цены/Новосибирск' | python3 /home/box/fatima/scripts/counter.py count
+      expect: 'JSON с тремя категориями; сверить с rclone cat счётчика (если он есть). ничего не пишет'
+    - cmd: |
+        rclone lsf --dirs-only 'gosplan:Госзакупки/Бланки' | head -3 | while read d; do
+          rclone cat "gosplan:Госзакупки/Бланки/${d}docs_status.json" | python3 /home/box/fatima/scripts/check_ready.py --status-file -; done
+      expect: 'строки «<номер> ready|not_ready ...»; пустые «Бланки» — нет строк. ничего не пишет'
+    - cmd: |
+        mkdir -p /tmp/fatima_check/src/0151100007126000034 && cp /home/box/fatima/examples/0151100007126000034/* /tmp/fatima_check/src/0151100007126000034/ &&
+        rclone copy /tmp/fatima_check/src 'gosplan:Госзакупки/_проверка_фатимы/Бланки' &&
+        rclone mkdir 'gosplan:Госзакупки/_проверка_фатимы/Цены/В городе' &&
+        rclone moveto 'gosplan:Госзакупки/_проверка_фатимы/Бланки/0151100007126000034' 'gosplan:Госзакупки/_проверка_фатимы/Цены/В городе/0151100007126000034' &&
+        rclone lsf -R 'gosplan:Госзакупки/_проверка_фатимы'
+      expect: 'в выводе «Цены/В городе/0151100007126000034/tender.json»; в «Бланки/» номера нет — moveto переносит папку целиком'
+      duration: '10–30 с'
+    - cmd: |
+        rclone lsf -R --dirs-only 'gosplan:Госзакупки/_проверка_фатимы/Цены' | python3 /home/box/fatima/scripts/counter.py init /tmp/fatima_check/счётчик.json --tz Europe/Berlin &&
+        rclone copyto /tmp/fatima_check/счётчик.json 'gosplan:Госзакупки/_проверка_фатимы/Цены/счётчик.json' &&
+        rclone cat 'gosplan:Госзакупки/_проверка_фатимы/Цены/счётчик.json'
+      expect: '{"В городе": 1, "Загород": 0, "С ограничениями": 0, "обновлено": ...}'
+  cleanup:
+    - cmd: rclone purge 'gosplan:Госзакупки/_проверка_фатимы'
+      note: 'только эта тестовая папка, созданная проверкой; владелец разрешает при установке. боевые папки не удалять'
+    - rm -rf /tmp/fatima_check
+
+first_run:
+  preconditions:
+    - verification пройдена, cleanup сделан
+    - 'rclone lsd gosplan:Госзакупки/Цены/Новосибирск — видны «В городе», «Загород», «С ограничениями»'
+    - 'прежняя Фатима (если есть) остановлена: две Фатимы на одни «Бланки» дадут двойной +1 в счётчике'
+    - владелец сказал включить рутину
+  notes:
+    - 'пустые «Бланки» — рутина молчит'
+    - 'тендеры с docs_status.state = pending пропускаются молча до следующего запуска'
+    - 'счётчик.json уже есть на Диске после прежней Фатимы — не пересоздавать, только +1'
