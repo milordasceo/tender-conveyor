@@ -1,0 +1,3 @@
+requests>=2.31.0,<3
+truststore>=0.9; python_version >= "3.10"
+# опционально, только если конфиг в YAML: pyyaml>=6.0

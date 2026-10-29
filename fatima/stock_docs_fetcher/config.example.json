@@ -1,0 +1,21 @@
+{
+  "stock_dir": "G:\\Мой диск\\Госзакупки\\Сток",
+  "blanks_dir": "G:\\Мой диск\\Госзакупки\\Бланки",
+  "scan_interval_sec": 60,
+  "download_pause_sec": 3,
+  "request_timeout_sec": 60,
+  "http_retries": 3,
+  "retry_backoff_sec": 5,
+  "max_file_size_mb": 200,
+  "retry_delay_min": 30,
+  "max_attempts": 5,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.7390.122 Safari/537.36",
+  "log_file": "stock_docs_fetcher.log",
+  "log_max_bytes": 5242880,
+  "log_backups": 5,
+  "lock_file": "stock_docs_fetcher.lock",
+  "verify_ssl": true,
+  "ssl_fallback_hosts": [
+    "zakupki.gov.ru"
+  ]
+}
