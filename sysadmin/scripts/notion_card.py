@@ -10,6 +10,10 @@
 всё остальное — из tender.json. Поставщики — из цены.md.
 Ссылки 2ГИС («2ГИС: откуда», «2ГИС: куда», «📍 2ГИС» в теле) — карточка здания:
   https://2gis.ru/<город>/geo/<id здания в 2ГИС>
+Готовые ссылки берутся как есть: у поставщика — строка «- 2ГИС: <ссылка>» варианта в цены.md
+(Черри Пикер), у адреса доставки — delivery.map_url в tender.json (Фатима). Если готовая ссылка —
+только поиск (/search/), скрипт пробует сам найти id здания (кроме --offline); не нашёл — оставляет её.
+Своя выдача — запасной путь, только когда готовой ссылки нет:
 id берётся со страницы поиска 2ГИС (https://2gis.ru/<город>/search/<адрес>, один GET на адрес,
 обычный браузерный User-Agent, пауза 1 с): в HTML есть initialState с найденным зданием
 (data.entity.profile → type "building", id, address_name). id принимается, только если поиск
@@ -153,6 +157,31 @@ def gis_url(text: str, city: str) -> str | None:
     return f"https://2gis.ru/{gis_city(city)}/search/{quote(addr, safe='')}"
 
 
+_GIS_READY = re.compile(r"https?://(?:www\.)?2gis\.ru/[^\s<>()\[\]]+", re.I)
+
+
+def gis_ready(raw: str | None) -> str | None:
+    """Готовая ссылка 2ГИС из строки цены.md / tender.json: url без ?stat= и хвостовой пунктуации; нет — None."""
+    m = _GIS_READY.search(raw or "")
+    return re.sub(r"[?#].*$", "", m.group(0)).rstrip(".,;") if m else None
+
+
+def gis_resolve(ready: str | None, text: str | None, city: str) -> str | None:
+    """Готовая geo/ — как есть; готовая /search/ — пробуем свою geo/ (кроме --offline), иначе готовая;
+    готовой нет — своя выдача по адресу (gis_url)."""
+    ready = gis_ready(ready)
+    if ready and "/geo/" in ready:
+        return ready
+    if ready:
+        addr = gis_address(text or "", city) if text else ""
+        if addr and re.search(r"\d", addr) and (GIS["ids"].get(addr) or GIS["net"]):
+            bid = GIS["ids"].get(addr) or gis_lookup(addr, city)
+            if bid:
+                return f"https://2gis.ru/{gis_city(city)}/geo/{bid}"
+        return ready
+    return gis_url(text, city) if text else None
+
+
 def gis_link(url: str | None) -> str:
     return f" — [📍 2ГИС]({url})" if url else ""
 
@@ -245,7 +274,8 @@ def parse_prices(md: str) -> list:
             rest = rest[: stop.start()] if stop else rest
             info = {"price": pm.group(2).strip()}
             for key, label in (("supplier", "Где купить"), ("phone", "Телефон"),
-                               ("link", r"(?:Ссылка|Сайт|URL)"), ("pack", "Фасовка")):
+                               ("link", r"(?:Ссылка|Сайт|URL)"), ("pack", "Фасовка"),
+                               ("gis", r"(?:2ГИС|2GIS)")):
                 fm = re.search(rf"^\s*[-*]\s*(?:\*\*)?{label}(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.+)$", rest, re.M | re.I)
                 if fm:
                     info[key] = fm.group(1).strip()
@@ -278,11 +308,12 @@ def build(folder: Path, drive_path: str | None):
     parts = [best[k] for k in ("purchase", "delivery", "tax")]
     expenses = round(sum(p for p in parts if p is not None), 2) if all(p is not None for p in parts) else None
 
-    sources, first_supplier = [], None
+    sources, first_supplier, first_gis = [], None, None
     for it in prices:
         info = it["variants"].get(best_name)
         if info and info.get("supplier"):
-            first_supplier = first_supplier or info["supplier"]
+            if not first_supplier:
+                first_supplier, first_gis = info["supplier"], info.get("gis")
             s = info["supplier"] + (f", тел. {info['phone']}" if info.get("phone") else "")
             if s not in sources:
                 sources.append(s)
@@ -291,8 +322,8 @@ def build(folder: Path, drive_path: str | None):
     d = tj.get("delivery", {})
     city = d.get("city") or ""
     dest = d.get("address") or d.get("address_notice") or ""
-    gis_to = gis_url(dest, city)
-    gis_from = gis_url(first_supplier, city) if first_supplier else None
+    gis_to = gis_resolve(d.get("map_url"), dest, city)
+    gis_from = gis_resolve(first_gis, first_supplier, city) if first_supplier else None
     if d.get("notes"):
         dest += f"; {d['notes']}"
 
@@ -390,7 +421,7 @@ def card(ctx) -> str:
             for key, label in (("supplier", "где"), ("phone", "телефон"), ("link", "сайт"), ("pack", "фасовка")):
                 if info.get(key):
                     val = site_link(info[key]) if key == "link" else info[key]
-                    extra = gis_link(gis_url(info[key], ctx["city"])) if key == "supplier" else ""
+                    extra = gis_link(gis_resolve(info.get("gis"), info[key], ctx["city"])) if key == "supplier" else ""
                     L.append(f"  - {label}: {val}{extra}")
             if not info.get("link"):
                 L.append("  - сайт: нет в цены.md")
