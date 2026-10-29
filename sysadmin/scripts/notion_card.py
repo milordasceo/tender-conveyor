@@ -8,9 +8,12 @@
 
 Правило: прибыль и расходы — из раздела «Расчёт рентабельности» в tender.md,
 всё остальное — из tender.json. Поставщики — из цены.md.
-Ссылки 2ГИС («2ГИС: откуда», «2ГИС: куда») — поиск адреса в городе тендера:
-https://2gis.ru/<город>/search/<адрес в URL-кодировке>; в адрес идут только город,
-улица и дом — без названия компании, индекса, телефона, этажа, офиса и примечаний.
+Ссылки 2ГИС — поиск адреса в городе тендера; в адрес идут только город, улица и дом —
+без названия компании, индекса, телефона, этажа, офиса и примечаний.
+  свойства «2ГИС: откуда», «2ГИС: куда» — приложение: dgis://2gis.ru/<город>/search/<адрес>
+  (диплинк 2ГИС; https Notion на телефоне открывает во встроенном браузере, т.е. на сайте);
+  тело страницы — https://2gis.ru/<город>/search/<адрес> («📍 2ГИС на сайте»): ссылки dgis://
+  и intent:// Notion в тексте страницы вырезает.
 «Чистая прибыль» — свойство-формула базы, скрипт её не заполняет.
 Только стандартная библиотека python 3.10+. Ничего не пишет и в сеть не ходит.
 
@@ -86,8 +89,18 @@ def gis_url(text: str, city: str) -> str | None:
     return f"https://2gis.ru/{gis_city(city)}/search/{quote(addr, safe='')}"
 
 
-def gis_link(url: str | None) -> str:
-    return f" — [📍 2ГИС]({url})" if url else ""
+def gis_app_url(web_url: str | None) -> str | None:
+    """Та же ссылка для мобильного приложения 2ГИС (схема dgis://, путь как у сайта)."""
+    return web_url.replace("https://2gis.ru/", "dgis://2gis.ru/", 1) if web_url else None
+
+
+def gis_link(url: str | None, prop: str | None = None) -> str:
+    """Ссылка 2ГИС в тексте страницы: только https (dgis:// Notion в тексте вырезает).
+    prop — имя свойства шапки с ссылкой на приложение («2ГИС: откуда» / «2ГИС: куда»)."""
+    if not url:
+        return ""
+    app = f"📱 в приложении 2ГИС: свойство «{prop}» в шапке · " if prop else ""
+    return f" — {app}[📍 2ГИС на сайте]({url})"
 
 
 _URL = re.compile(r"(?:https?://|www\.)[^\s<>()\[\]]+|"
@@ -248,8 +261,8 @@ def build(folder: Path, drive_path: str | None):
         "Количество поставок": tj.get("supply", {}).get("deliveries_count"),
         "Откуда забирать": pickup,
         "Куда везти": dest,
-        "2ГИС: откуда": gis_from,
-        "2ГИС: куда": gis_to,
+        "2ГИС: откуда": gis_app_url(gis_from),
+        "2ГИС: куда": gis_app_url(gis_to),
         "date:Подача до:start": tj.get("deadline", {}).get("iso"),
         "date:Подача до:is_datetime": 1,
         "Предмет": subj,
@@ -279,8 +292,8 @@ def card(ctx) -> str:
     if ctx["expenses"] is not None:
         L.append(f"- **Расходы:** {fmt_rub(ctx['expenses'])} = закупка {fmt_rub(best['purchase'])} + доставка {fmt_rub(best['delivery'])} + налог {fmt_rub(best['tax'])}")
     L += [f"- **Количество поставок:** {s.get('deliveries_count', '—')}",
-          f"- **Откуда забирать:** {ctx['pickup']}{gis_link(ctx['gis_from'])}",
-          f"- **Куда везти:** {ctx['dest']}{gis_link(ctx['gis_to'])}",
+          f"- **Откуда забирать:** {ctx['pickup']}{gis_link(ctx['gis_from'], '2ГИС: откуда')}",
+          f"- **Куда везти:** {ctx['dest']}{gis_link(ctx['gis_to'], '2ГИС: куда')}",
           f"- **Город и категория:** {d.get('city', '—')}, {tj.get('category', '—')}", ""]
     L += ["## Особые условия",
           f"- **Лицензии / разрешения:** {c.get('licenses_permits', '—')}",
