@@ -8,6 +8,10 @@
 
 Правило: прибыль и расходы — из раздела «Расчёт рентабельности» в tender.md,
 всё остальное — из tender.json. Поставщики — из цены.md.
+Ссылки 2ГИС («2ГИС: откуда», «2ГИС: куда») — поиск адреса в городе тендера:
+https://2gis.ru/<город>/search/<адрес в URL-кодировке>; в адрес идут только город,
+улица и дом — без названия компании, индекса, телефона, этажа, офиса и примечаний.
+«Чистая прибыль» — свойство-формула базы, скрипт её не заполняет.
 Только стандартная библиотека python 3.10+. Ничего не пишет и в сеть не ходит.
 
 Пример:
@@ -19,6 +23,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 VARIANTS = {"1": "А", "2": "Б", "3": "В"}
 NUM = r"(-?\d[\d\s\u00a0\u202f]*(?:[.,]\d+)?)"
@@ -31,6 +36,89 @@ ICONS = [
     (r"электр|ламп|кабел|светильник", "💡"), (r"инструмент", "🔧"), (r"книг|учебник", "📚"),
     (r"топлив|бензин|масл", "⛽"), (r"посуд", "🍽️"),
 ]
+
+
+GIS_CITIES = {
+    "новосибирск": "novosibirsk", "москва": "moscow", "санкт-петербург": "spb",
+    "екатеринбург": "ekaterinburg", "казань": "kazan", "красноярск": "krasnoyarsk",
+    "омск": "omsk", "томск": "tomsk", "барнаул": "barnaul", "кемерово": "kemerovo",
+    "новокузнецк": "novokuznetsk", "бердск": "berdsk", "искитим": "iskitim",
+    "обь": "ob", "иркутск": "irkutsk", "челябинск": "chelyabinsk", "тюмень": "tyumen",
+}
+_TR = dict(zip("абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+               ["a", "b", "v", "g", "d", "e", "e", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p",
+                "r", "s", "t", "u", "f", "h", "ts", "ch", "sh", "sch", "", "y", "", "e", "yu", "ya"]))
+# части адреса, которые 2ГИС не нужны: этаж, офис, кабинет, помещение, подъезд, примечания
+_GIS_DROP = re.compile(r"этаж|подъ[её]м|офис|\bоф\b|кабинет|\bкаб\b|помещ|\bпом\b|подъезд|склад|"
+                       r"тел\b|телефон|\+7|разгрузк|вход|ворот", re.I)
+
+
+def gis_city(city: str) -> str:
+    c = (city or "").strip().lower()
+    return GIS_CITIES.get(c) or "".join(_TR.get(ch, ch) for ch in c).replace(" ", "-") or "novosibirsk"
+
+
+def gis_address(text: str, city: str = "") -> str:
+    """Только адрес: «г. Город, ул. Улица, дом» — без компании, индекса, телефона, этажа и примечаний."""
+    t = (text or "").split(";")[0]
+    t = re.sub(r"\([^()]*\)", " ", t)                     # (вариант А), (+7 ...), (с подъёмом)
+    t = re.sub(r"«[^»]*»|\"[^\"]*\"", " ", t)               # «Компания»
+    t = re.split(r"\bтел\.?|\+7|\b8 \(", t)[0]              # телефон и всё после
+    keep = []
+    for part in (p.strip(" .,—-") for p in t.split(",")):
+        if not part or re.fullmatch(r"\d{6}", part) or _GIS_DROP.search(part):
+            continue
+        if re.search(r"российская федерация|^обл\.|область|^г\.о\.|городской округ|\bООО\b|\bИП\b|\bАО\b", part, re.I):
+            continue
+        keep.append(re.sub(r"\s+", " ", part))
+    addr = ", ".join(keep)
+    if city and city.lower() not in addr.lower():
+        addr = f"г. {city}, {addr}" if addr else f"г. {city}"
+    elif city:
+        addr = re.sub(rf"(?<![\w.])(?:г\.\s*)?{re.escape(city)}", f"г. {city}", addr, count=1, flags=re.I)
+    return addr
+
+
+def gis_url(text: str, city: str) -> str | None:
+    addr = gis_address(text, city)
+    if not re.search(r"\d", addr):                       # без номера дома 2ГИС адрес не найдёт
+        return None
+    return f"https://2gis.ru/{gis_city(city)}/search/{quote(addr, safe='')}"
+
+
+def gis_link(url: str | None) -> str:
+    return f" — [📍 2ГИС]({url})" if url else ""
+
+
+_URL = re.compile(r"(?:https?://|www\.)[^\s<>()\[\]]+|"
+                  r"\b(?:[\w-]+\.)+(?:рф|xn--[a-z0-9-]+|ru|com|net|org|su|онлайн|рус)(?:/[^\s<>()\[\]]*)?", re.I)
+
+
+def norm_link(raw: str) -> tuple[str, str] | None:
+    """Ссылка поставщика → (href, подпись). Понимает [текст](url), <url>, голый url, домен без https://,
+    punycode (xn--…) и кириллические домены (экохим54.рф): href — в punycode, подпись — по-русски."""
+    if not raw:
+        return None
+    m = re.search(r"\]\(([^)\s]+)\)", raw) or re.search(r"<([^>\s]+)>", raw) or _URL.search(raw)
+    if not m:
+        return None
+    url = (m.group(1) if m.re is not _URL else m.group(0)).rstrip(".,;")
+    if not re.match(r"https?://", url, re.I):
+        url = "https://" + url
+    sm = re.match(r"(https?://)([^/?#]+)(.*)", url, re.I)
+    scheme, host, rest = sm.groups()
+    try:
+        ascii_host = host.encode("idna").decode("ascii") if not host.isascii() else host
+        nice_host = ascii_host.encode("ascii").decode("idna") if "xn--" in ascii_host.lower() else ascii_host
+    except UnicodeError:
+        ascii_host = nice_host = host
+    nice_host = re.sub(r"^www\.", "", nice_host, flags=re.I)
+    return scheme + ascii_host + rest, nice_host
+
+
+def site_link(raw: str) -> str:
+    n = norm_link(raw)
+    return f"[{n[1]}]({n[0]})" if n else raw
 
 
 def rub_to_float(s: str) -> float:
@@ -90,8 +178,8 @@ def parse_prices(md: str) -> list:
             rest = rest[: stop.start()] if stop else rest
             info = {"price": pm.group(2).strip()}
             for key, label in (("supplier", "Где купить"), ("phone", "Телефон"),
-                               ("link", "Ссылка"), ("pack", "Фасовка")):
-                fm = re.search(rf"^-\s*{label}:\s*(.+)$", rest, re.M)
+                               ("link", r"(?:Ссылка|Сайт|URL)"), ("pack", "Фасовка")):
+                fm = re.search(rf"^\s*[-*]\s*(?:\*\*)?{label}(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.+)$", rest, re.M | re.I)
                 if fm:
                     info[key] = fm.group(1).strip()
             item["variants"][v] = info
@@ -123,17 +211,21 @@ def build(folder: Path, drive_path: str | None):
     parts = [best[k] for k in ("purchase", "delivery", "tax")]
     expenses = round(sum(p for p in parts if p is not None), 2) if all(p is not None for p in parts) else None
 
-    sources = []
+    sources, first_supplier = [], None
     for it in prices:
         info = it["variants"].get(best_name)
         if info and info.get("supplier"):
+            first_supplier = first_supplier or info["supplier"]
             s = info["supplier"] + (f", тел. {info['phone']}" if info.get("phone") else "")
             if s not in sources:
                 sources.append(s)
     pickup = "; ".join(sources) if sources else "нет в цены.md"
 
     d = tj.get("delivery", {})
+    city = d.get("city") or ""
     dest = d.get("address") or d.get("address_notice") or ""
+    gis_to = gis_url(dest, city)
+    gis_from = gis_url(first_supplier, city) if first_supplier else None
     if d.get("notes"):
         dest += f"; {d['notes']}"
 
@@ -156,13 +248,16 @@ def build(folder: Path, drive_path: str | None):
         "Количество поставок": tj.get("supply", {}).get("deliveries_count"),
         "Откуда забирать": pickup,
         "Куда везти": dest,
+        "2ГИС: откуда": gis_from,
+        "2ГИС: куда": gis_to,
         "date:Подача до:start": tj.get("deadline", {}).get("iso"),
         "date:Подача до:is_datetime": 1,
         "Предмет": subj,
         "Ссылка": tj.get("url"),  # обычное имя: префикс userDefined: только для свойств id/url
     }
     ctx = dict(tj=tj, calc=calc, prices=prices, best_name=best_name, best=best,
-               expenses=expenses, pickup=pickup, dest=dest, drive_path=drive_path)
+               expenses=expenses, pickup=pickup, dest=dest, drive_path=drive_path,
+               gis_from=gis_from, gis_to=gis_to, city=city)
     return {"icon": icon, "properties": props}, ctx
 
 
@@ -172,17 +267,20 @@ def card(ctx) -> str:
     nm = tj.get("nmck", {}).get("amount")
     L = []
     L += ["## Главное",
+          '<callout icon="💰" color="green_bg">',
+          f"**Чистая прибыль: {fmt_rub(best['profit'])}**",
+          "</callout>", "",
           f"- **Номер:** {tj['number']}",
           f"- **НМЦК:** {fmt_rub(nm)}",
-          f"- **Прибыль:** {fmt_rub(best['profit'])} (вариант {bn})"]
+          f"- **Прибыль:** <span color=\"green_bg\">**{fmt_rub(best['profit'])}**</span> (вариант {bn})"]
     for other, v in ctx["calc"]["variants"].items():
         if other != bn:
             L.append(f"  - вариант {other}: {fmt_rub(v['profit'])}")
     if ctx["expenses"] is not None:
         L.append(f"- **Расходы:** {fmt_rub(ctx['expenses'])} = закупка {fmt_rub(best['purchase'])} + доставка {fmt_rub(best['delivery'])} + налог {fmt_rub(best['tax'])}")
     L += [f"- **Количество поставок:** {s.get('deliveries_count', '—')}",
-          f"- **Откуда забирать:** {ctx['pickup']}",
-          f"- **Куда везти:** {ctx['dest']}",
+          f"- **Откуда забирать:** {ctx['pickup']}{gis_link(ctx['gis_from'])}",
+          f"- **Куда везти:** {ctx['dest']}{gis_link(ctx['gis_to'])}",
           f"- **Город и категория:** {d.get('city', '—')}, {tj.get('category', '—')}", ""]
     L += ["## Особые условия",
           f"- **Лицензии / разрешения:** {c.get('licenses_permits', '—')}",
@@ -222,9 +320,13 @@ def card(ctx) -> str:
         for v, info in it["variants"].items():
             mark = " — лучший" if v == bn else ""
             L.append(f"- **Вариант {v}{mark}:** {info['price']}")
-            for key, label in (("supplier", "где"), ("phone", "телефон"), ("link", "ссылка"), ("pack", "фасовка")):
+            for key, label in (("supplier", "где"), ("phone", "телефон"), ("link", "сайт"), ("pack", "фасовка")):
                 if info.get(key):
-                    L.append(f"  - {label}: {info[key]}")
+                    val = site_link(info[key]) if key == "link" else info[key]
+                    extra = gis_link(gis_url(info[key], ctx["city"])) if key == "supplier" else ""
+                    L.append(f"  - {label}: {val}{extra}")
+            if not info.get("link"):
+                L.append("  - сайт: нет в цены.md")
     calc_text = ctx["calc"]["text"]
     calc_text = re.sub(r"^## Расчёт рентабельности.*$", "## Расчёт рентабельности", calc_text, count=1, flags=re.M)
     L += ["", calc_text, "",
@@ -258,6 +360,8 @@ def main():
               f"расходы {fmt_rub(p['Расходы'])}, НМЦК {fmt_rub(p['Полная цена'])}")
         print(f"откуда: {p['Откуда забирать']}")
         print(f"куда: {p['Куда везти']}")
+        print(f"2ГИС откуда: {p['2ГИС: откуда'] or '—'}")
+        print(f"2ГИС куда: {p['2ГИС: куда'] or '—'}")
     else:
         print(json.dumps(out, ensure_ascii=False, indent=2))
 

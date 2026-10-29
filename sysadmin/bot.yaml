@@ -129,16 +129,31 @@ notion_layout:                                   # id страниц, баз и 
     - {name: Количество поставок, type: rich_text, source: 'tender.json supply.deliveries_count'}
     - {name: Откуда забирать, type: rich_text, source: 'цены.md: поставщик лучшего варианта'}
     - {name: Куда везти, type: rich_text, source: 'tender.json delivery.address + notes'}
+    - {name: '2ГИС: откуда', type: url, source: 'адрес поставщика лучшего варианта (только город, улица, дом) → ссылка 2ГИС, см. gis_link'}
+    - {name: '2ГИС: куда', type: url, source: 'delivery.address (только город, улица, дом) → ссылка 2ГИС, см. gis_link'}
     - {name: Подача до, type: date, time: true, source: 'tender.json deadline.iso'}
     - {name: Предмет, type: rich_text, source: 'tender.json subject + количество'}
     - {name: Ссылка, type: url, source: 'tender.json url'}
-  page_layout_header: [Полная цена, Прибыль, Расходы, Количество поставок, Откуда забирать, Куда везти, Город, Категория, Подача до, Предмет, Ссылка]
+    - {name: Чистая прибыль, type: formula, source: 'формула от «Прибыль» (см. profit_formula); не заполняется, считается сама'}
+  profit_formula: 'if(empty(prop("Прибыль")), "", style(replaceAll(replaceAll(replaceAll(format(prop("Прибыль")), "([0-9])([0-9]{3})([.]|$)", "$1 $2$3"), "([0-9])([0-9]{3}) ", "$1 $2 "), "[.]", ",") + " ₽", "b", "green", "green_background"))'
+  profit_formula_note: 'прибыль в рублях жирным, зелёный текст на зелёной подложке (25 317,59 ₽) — чтобы бросалась в глаза в карточке на телефоне. number-свойства Notion стилизовать нельзя, поэтому формула. «Прибыль» (number) остаётся в базе для сортировки и сумм, в шапке карточки скрыта'
+  gis_link:
+    format: 'https://2gis.ru/<город латиницей>/search/<адрес в URL-кодировке>'
+    city_slug: {Новосибирск: novosibirsk, Москва: moscow, Санкт-Петербург: spb, Томск: tomsk, Барнаул: barnaul, Кемерово: kemerovo}
+    address: 'только «г. Город, ул. Улица, дом» — без названия компании, индекса, телефона, этажа, офиса, «(с подъёмом)» и примечаний'
+    example: 'https://2gis.ru/novosibirsk/search/%D0%B3.%20%D0%9D%D0%BE%D0%B2%D0%BE%D1%81%D0%B8%D0%B1%D0%B8%D1%80%D1%81%D0%BA%2C%20%D1%83%D0%BB.%20%D0%9D%D0%B8%D0%BA%D0%BE%D0%BB%D0%B0%D1%8F%20%D0%9E%D1%81%D1%82%D1%80%D0%BE%D0%B2%D1%81%D0%BA%D0%BE%D0%B3%D0%BE%2C%2049%20%D0%BA.1'   # г. Новосибирск, ул. Николая Островского, 49 к.1
+  page_layout_header: [Полная цена, Чистая прибыль, Расходы, Количество поставок, Откуда забирать, '2ГИС: откуда', Куда везти, '2ГИС: куда', Город, Категория, Подача до, Предмет, Ссылка]
+  page_layout_hidden: [Прибыль]                  # в шапке скрыта (visibility: hide), в базе и таблице остаётся
+  page_layout: {main: [{type: cover}, {type: title}, {type: properties, properties: [{property: Полная цена}, {property: Чистая прибыль}, {property: Расходы}, {property: Количество поставок}, {property: Откуда забирать}, {property: '2ГИС: откуда', visibility: hide_if_empty}, {property: Куда везти}, {property: '2ГИС: куда', visibility: hide_if_empty}, {property: Город}, {property: Категория}, {property: Подача до}, {property: Предмет}, {property: Ссылка}, {property: Прибыль, visibility: hide}]}, {type: editor}, {type: discussions}]}
   ddl: |
     ADD COLUMN "Полная цена" NUMBER FORMAT 'ruble'; ADD COLUMN "Прибыль" NUMBER FORMAT 'ruble'; ADD COLUMN "Расходы" NUMBER FORMAT 'ruble';
     ADD COLUMN "Город" SELECT('Новосибирск':blue); ADD COLUMN "Категория" SELECT('В городе':green, 'Загород':orange, 'С ограничениями':red);
     ADD COLUMN "Количество поставок" RICH_TEXT; ADD COLUMN "Откуда забирать" RICH_TEXT; ADD COLUMN "Куда везти" RICH_TEXT;
-    ADD COLUMN "Подача до" DATE; ADD COLUMN "Предмет" RICH_TEXT; ADD COLUMN "Ссылка" URL
+    ADD COLUMN "Подача до" DATE; ADD COLUMN "Предмет" RICH_TEXT; ADD COLUMN "Ссылка" URL;
+    ADD COLUMN "2ГИС: откуда" URL; ADD COLUMN "2ГИС: куда" URL;
+    ADD COLUMN "Чистая прибыль" FORMULA('if(empty(prop("Прибыль")), "", style(replaceAll(replaceAll(replaceAll(format(prop("Прибыль")), "([0-9])([0-9]{3})([.]|$)", "$1 $2$3"), "([0-9])([0-9]{3}) ", "$1 $2 "), "[.]", ",") + " ₽", "b", "green", "green_background"))')
   card_sections: [Главное, 'Особые условия (+ Особые пометки)', Сроки, Что поставляем, Где купить, Расчёт рентабельности, Заказчик и закупка]
+  card_highlights: 'в начале «Главное» — зелёный callout (color green_bg, 💰) с жирной строкой «Чистая прибыль: <сумма> ₽»; в строке «Прибыль» сумма жирно на зелёной подложке. рядом с адресами в «Главное» (откуда, куда) и «Где купить» (каждый поставщик) — ссылка «📍 2ГИС». в Notion жирный хранится как <b>…</b>, не **…**: перед правкой страницы — fetch и брать текст как есть'
 
 owner_steps:
   connect_notion:
@@ -161,7 +176,7 @@ verification:
   test_remote: 'gosplan:Госзакупки/_проверка_сисадмина'
   steps:
     - cmd: python3 /home/box/sysadmin/scripts/notion_card.py /home/box/sysadmin/examples/0151100007126000034/input --summary
-      expect: 'прибыль 25 317,59 ₽ (вариант А), расходы 15 467,81 ₽, НМЦК 40 785,40 ₽; откуда — «Промышленная Площадка», ул. Николая Островского, 49 к.1'
+      expect: 'прибыль 25 317,59 ₽ (вариант А), расходы 15 467,81 ₽, НМЦК 40 785,40 ₽; откуда — «Промышленная Площадка», ул. Николая Островского, 49 к.1; строки «2ГИС откуда/куда» — ссылки https://2gis.ru/novosibirsk/search/… на «г. Новосибирск, ул. Николая Островского, 49 к.1» и «г. Новосибирск, ул. Богдана Хмельницкого, д.104» (curl -o /dev/null -w %{http_code} → 200)'
       duration: '< 1 с'
     - cmd: rclone lsf 'gosplan:Госзакупки'
       expect: 'видны К рассмотрению/ и CRM/ (CRM нет — создать: rclone mkdir gosplan:Госзакупки/CRM)'
@@ -181,7 +196,7 @@ verification:
       expect: 'с разрешения owner_steps.test_folder: в тестовой CRM/0151100007126000034/ — tender.json, tender.md, цены.md; в тестовой «К рассмотрению» номера нет'
       duration: '10–30 с'
     - cmd: 'коннектор Notion: search «К рассмотрению», fetch базы «Тендеры»'
-      expect: 'страница и база найдены, свойства и раскладка как в notion_layout. нет — создать их (это рабочая структура, не тест)'
+      expect: 'страница и база найдены, свойства (с «Чистая прибыль», «2ГИС: откуда», «2ГИС: куда») и раскладка как в notion_layout.page_layout. нет — создать их (это рабочая структура, не тест)'
     - cmd: 'коннектор Notion (с разрешения owner_steps.test_card): create page «_проверка_сисадмина» в корне, тело — examples/0151100007126000034/card.md; fetch'
       expect: 'страница открывается, разделы Главное … Заказчик и закупка на месте, строка «Папка на Диске: Госзакупки / CRM / 0151100007126000034»'
   cleanup:
