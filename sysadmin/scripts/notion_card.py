@@ -8,14 +8,18 @@
 
 Правило: прибыль и расходы — из раздела «Расчёт рентабельности» в tender.md,
 всё остальное — из tender.json. Поставщики — из цены.md.
-Ссылки 2ГИС — поиск адреса в городе тендера; в адрес идут только город, улица и дом —
-без названия компании, индекса, телефона, этажа, офиса и примечаний.
-  свойства «2ГИС: откуда», «2ГИС: куда» — приложение: dgis://2gis.ru/<город>/search/<адрес>
-  (диплинк 2ГИС; https Notion на телефоне открывает во встроенном браузере, т.е. на сайте);
-  тело страницы — https://2gis.ru/<город>/search/<адрес> («📍 2ГИС на сайте»): ссылки dgis://
-  и intent:// Notion в тексте страницы вырезает.
+Ссылки 2ГИС («2ГИС: откуда», «2ГИС: куда», «📍 2ГИС» в теле) — карточка здания:
+  https://2gis.ru/<город>/geo/<id здания в 2ГИС>
+id берётся со страницы поиска 2ГИС (https://2gis.ru/<город>/search/<адрес>, один GET на адрес,
+обычный браузерный User-Agent, пауза 1 с): в HTML есть initialState с найденным зданием
+(data.entity.profile → type "building", id, address_name). id принимается, только если поиск
+нашёл ровно одно здание и номер дома совпал. Не нашлось или нет сети —
+https://2gis.ru/<город>/search/<адрес> (и предупреждение в stderr).
+В адрес для поиска идут только город, улица и дом — без компании, индекса, телефона, этажа, офиса.
+  --offline        — в сеть не ходить (id только из --gis-ids, иначе ссылка-поиск);
+  --gis-ids FILE   — JSON {"адрес": "id"} с уже известными id (пример — examples/…/2gis_ids.json).
 «Чистая прибыль» — свойство-формула базы, скрипт её не заполняет.
-Только стандартная библиотека python 3.10+. Ничего не пишет и в сеть не ходит.
+Только стандартная библиотека python 3.10+. Ничего не пишет; в сеть — только к 2gis.ru (кроме --offline).
 
 Пример:
   python3 notion_card.py /tmp/t34
@@ -26,6 +30,9 @@ import json
 import re
 import sys
 from pathlib import Path
+import time
+import urllib.error
+import urllib.request
 from urllib.parse import quote
 
 VARIANTS = {"1": "А", "2": "Б", "3": "В"}
@@ -82,25 +89,72 @@ def gis_address(text: str, city: str = "") -> str:
     return addr
 
 
+GIS = {"net": True, "ids": {}, "cache": {}, "last": 0.0}
+_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+       "Chrome/141.0.0.0 Safari/537.36")
+
+
+def gis_parse_search(html: str, addr: str) -> str | None:
+    """id здания из HTML страницы поиска 2ГИС: ровно одно здание, номер дома совпадает."""
+    m = re.search(r"var initialState = JSON\.parse\('(.*?)'\);", html, re.S)
+    if not m:
+        return None
+    raw = m.group(1)
+    try:
+        state = json.loads(raw.encode("utf-8").decode("unicode_escape").encode("latin-1").decode("utf-8"))
+    except (ValueError, UnicodeError):
+        return None
+    prof = (state.get("data", {}).get("entity", {}) or {}).get("profile", {}) or {}
+    blds = [v.get("data", {}) for v in prof.values() if v.get("data", {}).get("type") == "building"]
+    if len(blds) != 1:
+        return None
+    b = blds[0]
+    house = re.findall(r"\d+", addr.split(",")[-1] if "," in addr else addr)
+    name = b.get("address_name") or b.get("name") or ""
+    if house and house[0] not in re.findall(r"\d+", name):
+        return None
+    bid = str(b.get("id", "")).split("_")[0]
+    return bid if bid.isdigit() else None
+
+
+def gis_lookup(addr: str, city: str) -> str | None:
+    """Один GET страницы поиска 2ГИС на адрес (с кешем и паузой 1 с); None — не нашли/нет сети."""
+    key = f"{gis_city(city)}|{addr}"
+    if key in GIS["cache"]:
+        return GIS["cache"][key]
+    bid = None
+    try:
+        time.sleep(max(0.0, 1.0 - (time.time() - GIS["last"])))
+        req = urllib.request.Request(f"https://2gis.ru/{gis_city(city)}/search/{quote(addr, safe='')}",
+                                     headers={"User-Agent": _UA, "Accept": "text/html",
+                                              "Accept-Language": "ru-RU,ru;q=0.9"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            bid = gis_parse_search(r.read().decode("utf-8", "replace"), addr)
+    except urllib.error.HTTPError as e:                 # 404 — 2ГИС ничего не нашёл
+        if e.code != 404:
+            print(f"2ГИС: {addr}: HTTP {e.code}", file=sys.stderr)
+    except OSError as e:
+        print(f"2ГИС: {addr}: сеть — {e}", file=sys.stderr)
+    finally:
+        GIS["last"] = time.time()
+    GIS["cache"][key] = bid
+    return bid
+
+
 def gis_url(text: str, city: str) -> str | None:
+    """https://2gis.ru/<город>/geo/<id здания>; не нашли — https://2gis.ru/<город>/search/<адрес>."""
     addr = gis_address(text, city)
     if not re.search(r"\d", addr):                       # без номера дома 2ГИС адрес не найдёт
         return None
+    bid = GIS["ids"].get(addr) or (gis_lookup(addr, city) if GIS["net"] else None)
+    if bid:
+        return f"https://2gis.ru/{gis_city(city)}/geo/{bid}"
+    print(f"2ГИС: {addr}: id здания не найден — ссылка на поиск", file=sys.stderr)
     return f"https://2gis.ru/{gis_city(city)}/search/{quote(addr, safe='')}"
 
 
-def gis_app_url(web_url: str | None) -> str | None:
-    """Та же ссылка для мобильного приложения 2ГИС (схема dgis://, путь как у сайта)."""
-    return web_url.replace("https://2gis.ru/", "dgis://2gis.ru/", 1) if web_url else None
-
-
-def gis_link(url: str | None, prop: str | None = None) -> str:
-    """Ссылка 2ГИС в тексте страницы: только https (dgis:// Notion в тексте вырезает).
-    prop — имя свойства шапки с ссылкой на приложение («2ГИС: откуда» / «2ГИС: куда»)."""
-    if not url:
-        return ""
-    app = f"📱 в приложении 2ГИС: свойство «{prop}» в шапке · " if prop else ""
-    return f" — {app}[📍 2ГИС на сайте]({url})"
+def gis_link(url: str | None) -> str:
+    return f" — [📍 2ГИС]({url})" if url else ""
 
 
 _URL = re.compile(r"(?:https?://|www\.)[^\s<>()\[\]]+|"
@@ -261,8 +315,8 @@ def build(folder: Path, drive_path: str | None):
         "Количество поставок": tj.get("supply", {}).get("deliveries_count"),
         "Откуда забирать": pickup,
         "Куда везти": dest,
-        "2ГИС: откуда": gis_app_url(gis_from),
-        "2ГИС: куда": gis_app_url(gis_to),
+        "2ГИС: откуда": gis_from,
+        "2ГИС: куда": gis_to,
         "date:Подача до:start": tj.get("deadline", {}).get("iso"),
         "date:Подача до:is_datetime": 1,
         "Предмет": subj,
@@ -292,8 +346,8 @@ def card(ctx) -> str:
     if ctx["expenses"] is not None:
         L.append(f"- **Расходы:** {fmt_rub(ctx['expenses'])} = закупка {fmt_rub(best['purchase'])} + доставка {fmt_rub(best['delivery'])} + налог {fmt_rub(best['tax'])}")
     L += [f"- **Количество поставок:** {s.get('deliveries_count', '—')}",
-          f"- **Откуда забирать:** {ctx['pickup']}{gis_link(ctx['gis_from'], '2ГИС: откуда')}",
-          f"- **Куда везти:** {ctx['dest']}{gis_link(ctx['gis_to'], '2ГИС: куда')}",
+          f"- **Откуда забирать:** {ctx['pickup']}{gis_link(ctx['gis_from'])}",
+          f"- **Куда везти:** {ctx['dest']}{gis_link(ctx['gis_to'])}",
           f"- **Город и категория:** {d.get('city', '—')}, {tj.get('category', '—')}", ""]
     L += ["## Особые условия",
           f"- **Лицензии / разрешения:** {c.get('licenses_permits', '—')}",
@@ -360,7 +414,12 @@ def main():
     ap.add_argument("--card", action="store_true", help="печатать тело карточки (markdown)")
     ap.add_argument("--summary", action="store_true", help="печатать короткую сводку")
     ap.add_argument("--drive-path", help="путь папки тендера на Диске для раздела «Заказчик и закупка»")
+    ap.add_argument("--offline", action="store_true", help="не ходить в 2ГИС за id зданий (ссылки-поиск или --gis-ids)")
+    ap.add_argument("--gis-ids", type=Path, help='JSON {"адрес": "id здания 2ГИС"} с уже известными id')
     a = ap.parse_args()
+    GIS["net"] = not a.offline
+    if a.gis_ids:
+        GIS["ids"] = json.loads(a.gis_ids.read_text(encoding="utf-8"))
     for f in ("tender.json", "tender.md"):
         if not (a.folder / f).exists():
             sys.exit(f"нет {a.folder / f}")
