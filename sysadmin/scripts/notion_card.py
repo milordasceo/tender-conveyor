@@ -12,7 +12,7 @@
 
 Пример:
   python3 notion_card.py /tmp/t34
-  python3 notion_card.py /tmp/t34 --card --drive-path "Госзакупки/К рассмотрению/0151100007126000034"
+  python3 notion_card.py /tmp/t34 --card --drive-path "Госзакупки / CRM / 0151100007126000034"
 """
 import argparse
 import json
@@ -235,7 +235,7 @@ def card(ctx) -> str:
           f"- **Закон / способ:** {tj.get('law', '—')}, {tj.get('method', '—')}",
           f"- **Площадка:** {tj.get('platform', '—')}",
           f"- **Ссылка:** {tj.get('url', '—')}",
-          f"- **Папка на Диске:** {ctx['drive_path'] or 'Госзакупки/К рассмотрению/' + tj['number']}"]
+          f"- **Папка на Диске:** {ctx['drive_path'] or 'Госзакупки / CRM / ' + tj['number']}"]
     return "\n".join(L) + "\n"
 
 
