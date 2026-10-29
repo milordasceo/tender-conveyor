@@ -93,22 +93,47 @@ P
 [ $c = 0 ] && grep -q "не «С ограничениями»" "$T/out" && grep -q "не равна НМЦК" "$T/out" && ok "validate: предупреждения" || { bad "validate: предупреждения"; cat "$T/out"; }
 expect "render_md" 0 "$PY" "$HERE/render_md.py" "$EX" -o "$T/tender.md"
 grep -q "## Объекты закупки" "$T/tender.md" && grep -q "40 785,40 ₽" "$T/tender.md" && ok "render_md: содержимое" || bad "render_md: содержимое"
+grep -q "## Особые пометки" "$T/tender.md" && grep -q "7 этаж" "$T/tender.md" && ok "render_md: особые пометки" || bad "render_md: особые пометки"
+"$PY" - "$EX" "$T/nonotes.json" "$T/nofield.json" <<'P'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+d["special_notes"] = []; d["delivery"]["notes"] = "Доставка силами Поставщика"; d["delivery"]["address_notice"] = "г. Новосибирск"
+json.dump(d, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False)
+del d["special_notes"]
+json.dump(d, open(sys.argv[3], "w", encoding="utf-8"), ensure_ascii=False)
+P
+expect "validate: нет special_notes = код 1" 1 "$PY" "$HERE/validate_tender.py" "$T/nofield.json"
+expect "validate: пустые особые пометки допустимы" 0 "$PY" "$HERE/validate_tender.py" "$T/nonotes.json"
+"$PY" "$HERE/render_md.py" "$T/nonotes.json" -o "$T/nonotes.md" >/dev/null
+grep -A2 "## Особые пометки" "$T/nonotes.md" | grep -qx "нет" && ok "render_md: пустые пометки = «нет»" || bad "render_md: пустые пометки"
+"$PY" - "$EX" "$T/lost.json" <<'P'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+d["special_notes"] = []
+json.dump(d, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False)
+P
+"$PY" "$HERE/validate_tender.py" "$T/lost.json" >"$T/out" 2>&1; c=$?
+[ $c = 0 ] && grep -q "special_notes пусто" "$T/out" && ok "validate: подъём в условиях, а пометок нет" || { bad "validate: пропавшие пометки"; cat "$T/out"; }
 
 # --- counter.py
 C="$T/счётчик.json"
 printf '%s\n' "В городе/" "В городе/0151100007126000034/" "В городе/0151100007126000034/txt/" \
-  "Загород/" "С ограничениями/" "С ограничениями/Лицензии/" "С ограничениями/Лицензии/32616501202/" \
-  "С ограничениями/Опыт/" "С ограничениями/0351200003326001418/" >"$T/lsf.txt"
+  "Загород/" "С ограничениями/" "С ограничениями/32616501202/" \
+  "С ограничениями/0351200003326001418/" "С ограничениями/0351200003326001418/txt/" >"$T/lsf.txt"
 expect "counter: inc без файла = ошибка" 1 "$PY" "$HERE/counter.py" inc "$C" "Загород"
 expect "counter: init" 0 sh -c "\"$PY\" \"$HERE/counter.py\" init \"$C\" < \"$T/lsf.txt\""
 expect "counter: init второй раз не затирает" 1 sh -c "\"$PY\" \"$HERE/counter.py\" init \"$C\" < \"$T/lsf.txt\""
-expect "counter: inc" 0 "$PY" "$HERE/counter.py" inc "$C" "Загород" --tz Europe/Berlin
-"$PY" - "$C" <<'P' && ok "counter: значения 1/1/2" || bad "counter: значения"
+expect "counter: inc (TZ бокса — Нью-Йорк)" 0 env TZ=America/New_York "$PY" "$HERE/counter.py" inc "$C" "Загород"
+"$PY" - "$C" <<'P' && ok "counter: значения 1/1/2, время по Новосибирску" || bad "counter: значения или время"
 import json, re, sys
+from datetime import datetime, timedelta, timezone
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 assert (d["В городе"], d["Загород"], d["С ограничениями"]) == (1, 1, 2), d
 assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d", d["обновлено"]), d
+t = datetime.strptime(d["обновлено"], "%Y-%m-%d %H:%M").replace(tzinfo=timezone(timedelta(hours=7)))
+assert abs((datetime.now(timezone.utc) - t).total_seconds()) < 180, (d["обновлено"], "не UTC+7")
 P
+expect "counter: --tz больше нет" 2 "$PY" "$HERE/counter.py" inc "$C" "Загород" --tz Europe/Berlin
 expect "counter: неверная категория" 2 "$PY" "$HERE/counter.py" inc "$C" "Москва"
 
 [ $fail = 0 ] && echo "selftest: всё прошло" || echo "selftest: есть ошибки"

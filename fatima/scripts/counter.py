@@ -11,26 +11,25 @@
   count                                 — посчитать папки тендеров по выводу
                                           `rclone lsf -R --dirs-only 'gosplan:Госзакупки/Цены/<город>'` со stdin
   init  <файл> [--force]                — создать файл; счёт берёт со stdin (как у count)
-Время «обновлено» — по часам бокса (TZ) или --tz Europe/Berlin.
-Категории: «В городе», «Загород», «С ограничениями» (подпапки «Лицензии», «Опыт» и любые другие
-внутри категории считаются в неё).
+Время «обновлено» — всегда по Новосибирску (UTC+7, Asia/Novosibirsk), независимо от часов и TZ бокса.
+Категории: «В городе», «Загород», «С ограничениями». Тендеры с ограничениями лежат прямо в «С ограничениями»;
+если в категории всё же окажется подпапка, тендер в ней считается в эту категорию.
 """
 import argparse
 import json
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 CATS = ["В городе", "Загород", "С ограничениями"]
 TENDER = re.compile(r"^[0-9]{6,}$")
+# Новосибирск: UTC+7 круглый год (перехода на летнее время нет), поэтому фиксированное смещение — без tzdata
+NSK = timezone(timedelta(hours=7), "Asia/Novosibirsk")
 
 
-def now(tz):
-    if tz:
-        from zoneinfo import ZoneInfo
-        return datetime.now(ZoneInfo(tz)).strftime("%Y-%m-%d %H:%M")
-    return datetime.now().strftime("%Y-%m-%d %H:%M")
+def now():
+    return datetime.now(NSK).strftime("%Y-%m-%d %H:%M")
 
 
 def load(p):
@@ -75,10 +74,9 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("show"); s.add_argument("file", type=Path)
     s = sub.add_parser("inc"); s.add_argument("file", type=Path); s.add_argument("category", choices=CATS)
-    s.add_argument("--by", type=int, default=1); s.add_argument("--tz")
+    s.add_argument("--by", type=int, default=1)
     sub.add_parser("count")
     s = sub.add_parser("init"); s.add_argument("file", type=Path); s.add_argument("--force", action="store_true")
-    s.add_argument("--tz")
     a = ap.parse_args()
     if a.cmd == "show":
         print(json.dumps(load(a.file), ensure_ascii=False))
@@ -87,7 +85,7 @@ def main():
             raise SystemExit(f"нет {a.file}: сначала init по текущим папкам")
         d = load(a.file)
         d[a.category] += a.by
-        d["обновлено"] = now(a.tz)
+        d["обновлено"] = now()
         save(a.file, d)
     elif a.cmd == "count":
         print(json.dumps(count(sys.stdin), ensure_ascii=False))
@@ -95,7 +93,7 @@ def main():
         if a.file.exists() and not a.force:
             raise SystemExit(f"{a.file} уже есть — не затираю (--force, если точно надо)")
         d = count(sys.stdin)
-        d["обновлено"] = now(a.tz)
+        d["обновлено"] = now()
         save(a.file, d)
     return 0
 

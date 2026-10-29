@@ -59,7 +59,10 @@ def render(d):
          f"- **Обеспечение контракта:** {c['contract_security']}",
          f"- **Обеспечение гарантийных обязательств:** {c['warranty_security']}",
          f"- **Прочее:** {c['other']}",
-         "", "## Объекты закупки"]
+         "", "## Особые пометки"]
+    notes = d.get("special_notes") or []
+    L += [f"- {x}" for x in notes] if notes else ["нет"]
+    L += ["", "## Объекты закупки"]
     for n, it in enumerate(d["items"], 1):
         L += ["", f"### {n}. {it['name']}", f"- ОКПД2: {it['okpd2']}; КТРУ: {it['ktru']}"]
         L += [f"- {x['name']}: {x['value']}" for x in it["characteristics"]]

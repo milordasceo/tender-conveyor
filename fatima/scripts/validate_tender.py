@@ -5,7 +5,7 @@
   python3 validate_tender.py <tender.json> [--folder-name <номер>]
 Ошибки (код 1) — файл не по схеме, заливать нельзя.
 Предупреждения (код 0) — перечитать документы: сумма позиций не равна НМЦК,
-категория расходится с условиями, «не указано» в важных полях и т.п.
+категория расходится с условиями, пустые особые пометки при подъёме/разгрузке в условиях, «не указано» в важных полях и т.п.
 Без зависимостей: поддержано подмножество JSON Schema, которое использует схема
 (type, const, enum, required, properties, additionalProperties, items, minItems,
 minLength, pattern, minimum).
@@ -97,6 +97,10 @@ def sanity(d, folder_name):
         w.append("лицензии/опыт указаны как требование, а категория не «С ограничениями»")
     if not restricted and cat == "С ограничениями" and "огранич" not in (d.get("category_reason") or "").lower():
         w.append("категория «С ограничениями» без лицензий/опыта — причина должна называть ограничение")
+    notes = d.get("special_notes") or []
+    hint = " ".join([(d.get("delivery") or {}).get("notes") or "", (d.get("delivery") or {}).get("address_notice") or ""]).lower()
+    if not notes and re.search(r"этаж|подъ[её]м|разгруз|монтаж|сборк|\bчас|время", hint):
+        w.append("special_notes пусто, а в условиях доставки есть подъём/разгрузка/монтаж/время — перенести в особые пометки")
     for path in ("nmck.amount", "delivery.address", "delivery.city", "deadline.local"):
         a, b = path.split(".")
         v = (d.get(a) or {}).get(b)

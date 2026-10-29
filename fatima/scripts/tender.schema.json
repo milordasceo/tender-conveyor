@@ -4,7 +4,7 @@
   "title": "tender.json после разбора Фатимой (schema_version 1)",
   "description": "Чистая карточка тендера для CRM. Чего нет в документах — строка «не указано». Объекты закупки — дословно из документов.",
   "type": "object",
-  "required": ["schema_version", "number", "url", "subject", "law", "method", "platform", "customer", "deadline", "nmck", "delivery", "supply", "conditions", "items", "category", "category_reason"],
+  "required": ["schema_version", "number", "url", "subject", "law", "method", "platform", "customer", "deadline", "nmck", "delivery", "supply", "conditions", "special_notes", "items", "category", "category_reason"],
   "additionalProperties": false,
   "properties": {
     "schema_version": {"const": 1},
@@ -53,7 +53,7 @@
         "address": {"type": "string", "minLength": 1, "description": "адрес поставки/оказания услуги из ТЗ или контракта"},
         "address_notice": {"type": "string", "minLength": 1, "description": "адрес из извещения дословно"},
         "city": {"type": "string", "minLength": 1, "description": "населённый пункт; по нему «В городе» / «Загород»"},
-        "notes": {"type": "string", "minLength": 1, "description": "разгрузка, подъём, вывоз тары и т.п."}
+        "notes": {"type": "string", "minLength": 1, "description": "условия доставки кратко: разгрузка, подъём, вывоз тары и т.п. Подробно — в special_notes"}
       }
     },
     "supply": {
@@ -83,6 +83,11 @@
         "warranty_security": {"type": "string", "minLength": 1},
         "other": {"type": "string", "minLength": 1}
       }
+    },
+    "special_notes": {
+      "type": "array",
+      "description": "Особые пометки: особенности исполнения из документов — подъём на этаж, разгрузка силами поставщика, часы/время доставки, предварительное уведомление, сборка/монтаж, вывоз тары и т.п. Каждая строка — одна пометка по смыслу документов, с источником (п. ТЗ/контракта/извещения). Ничего нет — пустой массив (в tender.md «нет»)",
+      "items": {"type": "string", "minLength": 1}
     },
     "items": {
       "type": "array",
@@ -117,7 +122,7 @@
         }
       }
     },
-    "category": {"enum": ["В городе", "Загород", "С ограничениями"]},
+    "category": {"enum": ["В городе", "Загород", "С ограничениями"], "description": "папка в «Цены/Новосибирск/». Все тендеры с ограничениями — прямо в «С ограничениями», без подпапок"},
     "category_reason": {"type": "string", "minLength": 1}
   }
 }
