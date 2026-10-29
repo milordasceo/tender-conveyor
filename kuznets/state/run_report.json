@@ -1,0 +1,45 @@
+{
+  "date": "2026-10-29T10:23:04+07:00",
+  "export_dir": "",
+  "remote": "gosplan:Госзакупки/Сток",
+  "since_effective": null,
+  "filters": {
+    "keywords": [],
+    "keywords_all": false,
+    "okpd2": [],
+    "min_budget": 30000,
+    "max_budget": 150000,
+    "since": "auto",
+    "published_after": null,
+    "published_before": null,
+    "regions": [
+      54
+    ],
+    "delivery_cities": [
+      "Новосибирск"
+    ],
+    "stage": 1,
+    "currency": "RUB",
+    "purchase_types": {
+      "fz44": [
+        "epNotificationEZK2020",
+        "epNotificationEF2020"
+      ],
+      "fz223": [
+        "purchaseNoticeZK",
+        "purchaseNoticeZKESMBO",
+        "purchaseNoticeAE",
+        "purchaseNoticeAESMBO",
+        "purchaseNoticeOA"
+      ]
+    }
+  },
+  "found": 520,
+  "new": 520,
+  "exported": 5,
+  "pending_left": 515,
+  "http_429": 3,
+  "rclone_failures": 0,
+  "completed": false,
+  "exit_code": 3
+}
