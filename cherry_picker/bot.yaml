@@ -1,0 +1,154 @@
+# манифест звена «Черри Пикер». схема — ../SCHEMA.md
+# пути repo — от корня репозитория. пути box — абсолютные на боксе Grok Bot.
+schema_version: 1
+link: cherry_picker
+order_hint: 'третье звено; вход — «Госзакупки/Цены/<город>/В городе» и счётчик.json (от Фатимы), выход — «Госзакупки/К расчёту/<номер>» с файлом цены.md для бота, который считает'
+docs:
+  readme: cherry_picker/README.md                 # роль, порядок работы, особые случаи
+  install: cherry_picker/INSTALL_BY_BOT.md        # установка ботом, по шагам
+  example: cherry_picker/examples/0151100007126000034/цены.md  # образец цены.md
+
+bot:
+  name: Черри Пикер
+  title: Ценоискатель — третье звено конвейера тендеров
+  description: Берёт тендеры из «Госзакупки/Цены/<город>/В городе», находит по каждой позиции минимум две самые низкие цены в городе тендера, кладёт короткий цены.md в папку тендера и переносит её в «Госзакупки/К расчёту», вычитая единицу в счётчике.
+  prompt_file: cherry_picker/bot/prompt.md        # весь файл = системный промт, вставлять как есть
+  placeholders:                                   # заменить в prompt_file при создании
+    "<id Смотрителя>": {bot: Смотритель, note: подставить id при создании}
+    "<id Кузнеца>": {bot: Кузнец, note: подставить id при создании}
+
+teammates:                                        # только по имени. id подставить при создании
+  - name: Смотритель
+    relation: 'надзиратель конвейера; может явно поручить тендеры из «Загород» и «С ограничениями»'
+  - name: Кузнец
+    relation: 'настраивает и чинит rclone remote gosplan:; ему — 401/invalid_grant'
+  - name: Фатима
+    relation: 'предыдущее звено; кладёт тендеры в «Цены/<город>/<категория>» и делает +1 в счётчике. связь только через папки и счётчик'
+  - name: бот, который считает
+    relation: 'следующее звено; берёт тендеры из «К расчёту». имя владелец не назвал; связь только через папку'
+
+routines:
+  - name: 'Цены: проверка папки «В городе»'
+    cron: "0,30 * * * *"                          # в Grok Bot: CRON_TZ=Europe/Berlin 0,30 * * * *
+    timezone: Europe/Berlin
+    timing: {mode: flexible, earlyMinutes: 15, lateMinutes: 15}
+    prompt_file: cherry_picker/bot/routine_prompt.md  # весь файл = промт рутины, дословно
+    command: 'нет одной команды: рутина идёт по шагам системного промта (rclone + поиск в интернете через фонового исполнителя)'
+    enable: last                                  # после verification и подтверждения владельца (owner_steps.confirm_routine)
+
+deploy: []                                        # скриптов нет. рабочие папки создать пустыми: /home/box/cherry/{work,state/в_работе}. уже есть — не затирать
+
+dependencies:
+  python:
+    min_version: "3.10"
+    venv: 'не нужен: python3 только для правки счётчик.json, стандартная библиотека'
+    packages: []
+  rclone:
+    version: "1.75.2"                              # как у Кузнеца; новее — допустимо
+    install: curl https://rclone.org/install.sh | sudo bash
+    check: rclone version
+    remote_name: gosplan
+    note: 'нужен rclone remote gosplan: с доступом к Drive (настраивает Кузнец). конфиг rclone Черри Пикер не читает и не трогает'
+  browser:
+    purpose: 'браузер бокса — для сайтов, которые блокируют запросы без браузера (pulscen, blizko, lenta, Avito, Wildberries)'
+    check: 'есть рабочий стол бокса с браузером'
+
+config:
+  file: 'нет отдельного файла: правила — в bot/prompt.md'
+  current:
+    input: 'gosplan:Госзакупки/Цены/<город>/В городе'
+    manual_only: [Загород, С ограничениями]         # только по команде владельца или Смотрителя
+    output: 'gosplan:Госзакупки/К расчёту'
+    counter: 'gosplan:Госзакупки/Цены/<город>/счётчик.json'
+    counter_time_zone: Asia/Novosibirsk
+    per_run_max: 3
+    min_prices_per_item: 2
+    source_hints: [nsk.pulscen.ru, nsk.blizko.ru, lenta.com/catalog, Avito, Wildberries]
+  owner: 'владелец; правила меняются только по его команде (правка bot/prompt.md)'
+
+secrets: []                                       # своих секретов нет. доступ к Drive — общий rclone remote gosplan: (Кузнец)
+
+connectors:
+  - name: Google Drive
+    required: false
+    account: аккаунт Google, владеющий папкой «Госзакупки»
+    purpose: 'не обязателен: вся работа через rclone'
+
+drive_layout:                                     # id папок не хардкодить
+  account: аккаунт Google, владеющий папкой «Госзакупки»
+  root: Госзакупки
+  folders:
+    - Цены/<город>/В городе                       # вход (наполняет Фатима)
+    - Цены/<город>/Загород
+    - Цены/<город>/С ограничениями
+    - К расчёту                                   # выход
+  rule: 'есть — использовать как есть. нет «К расчёту» — создать rclone mkdir. «Цены/...» не создавать: их ведёт Фатима'
+  rclone_paths:
+    prices: 'gosplan:Госзакупки/Цены'
+    counter: 'gosplan:Госзакупки/Цены/<город>/счётчик.json'
+    out: 'gosplan:Госзакупки/К расчёту'
+    test: 'gosplan:Госзакупки/_проверка_черри'
+
+owner_steps:
+  rclone_ready:
+    why: 'Черри Пикер работает через общий rclone remote gosplan:, его настраивает Кузнец'
+    say: "Для Черри Пикера нужен rclone remote gosplan: с доступом к Google Диску (папка «Госзакупки»). Его настраивает Кузнец. Подтвердите, что Кузнец уже установлен и вход rclone сделан, или попросите Кузнеца это сделать."
+    bot_does: "проверка: rclone lsf 'gosplan:Госзакупки' — видны Цены/ и К расчёту/. конфиг rclone не открывать"
+  test_folder:
+    say: "Для проверки создам тестовую папку «Госзакупки/_проверка_черри», перенесу в ней образец и поправлю тестовый счётчик, затем удалю эту папку. Боевые «Цены», «К расчёту» и счётчик не трогаю. Разрешаете?"
+  old_bot:
+    say: "Если прежний Черри Пикер ещё работает, остановите его рутину: два бота на одну «В городе» дадут двойной −1 в счётчике и двойные цены.md. Подтвердите, когда остановлено."
+  confirm_routine:
+    say: "Рутина Черри Пикера «Цены: проверка папки «В городе»»: каждые 30 минут (:00 и :30, гибко ±15 минут), Europe/Berlin, круглосуточно. Включить сейчас?"
+
+verification:
+  state_dir: /tmp/cherry_check                    # всё локально; боевые папки Drive только читаются
+  test_remote: 'gosplan:Госзакупки/_проверка_черри'
+  steps:
+    - cmd: rclone lsf 'gosplan:Госзакупки'
+      expect: 'видны Цены/ и К расчёту/ (только чтение)'
+    - cmd: rclone lsf 'gosplan:Госзакупки/Цены'
+      expect: 'папки городов, например Новосибирск/'
+    - cmd: |
+        for c in $(rclone lsf --dirs-only 'gosplan:Госзакупки/Цены'); do
+          echo "== $c"; rclone cat "gosplan:Госзакупки/Цены/${c}счётчик.json"; echo; done
+      expect: 'по каждому городу JSON {"В городе": N, "Загород": N, "С ограничениями": N, "обновлено": ...}. ничего не пишет'
+    - cmd: |
+        mkdir -p /tmp/cherry_check/src/0151100007126000034 &&
+        cp /tmp/tender-conveyor/cherry_picker/examples/0151100007126000034/цены.md /tmp/cherry_check/src/0151100007126000034/ &&
+        printf '{"В городе": 1, "Загород": 0, "С ограничениями": 0, "обновлено": "2026-01-01 00:00"}\n' > /tmp/cherry_check/src/счётчик.json &&
+        rclone copy /tmp/cherry_check/src/0151100007126000034 "gosplan:Госзакупки/_проверка_черри/Цены/Тест/В городе/0151100007126000034" &&
+        rclone copyto /tmp/cherry_check/src/счётчик.json "gosplan:Госзакупки/_проверка_черри/Цены/Тест/счётчик.json" &&
+        rclone moveto "gosplan:Госзакупки/_проверка_черри/Цены/Тест/В городе/0151100007126000034" "gosplan:Госзакупки/_проверка_черри/К расчёту/0151100007126000034" &&
+        rclone lsf -R 'gosplan:Госзакупки/_проверка_черри'
+      expect: 'в выводе «К расчёту/0151100007126000034/цены.md»; в «Цены/Тест/В городе/» номера нет'
+      duration: '10–30 с'
+    - cmd: |
+        rclone copyto "gosplan:Госзакупки/_проверка_черри/Цены/Тест/счётчик.json" /tmp/cherry_check/счётчик.json &&
+        python3 - <<'PY'
+        import json, subprocess
+        p = '/tmp/cherry_check/счётчик.json'
+        d = json.load(open(p, encoding='utf-8'))
+        d['В городе'] = max(0, int(d['В городе']) - 1)
+        d['обновлено'] = subprocess.check_output(['date', '+%Y-%m-%d %H:%M'], env={'TZ': 'Asia/Novosibirsk'}, text=True).strip()
+        json.dump(d, open(p, 'w', encoding='utf-8'), ensure_ascii=False)
+        PY
+        rclone copyto /tmp/cherry_check/счётчик.json "gosplan:Госзакупки/_проверка_черри/Цены/Тест/счётчик.json" &&
+        rclone cat "gosplan:Госзакупки/_проверка_черри/Цены/Тест/счётчик.json"
+      expect: '{"В городе": 0, "Загород": 0, "С ограничениями": 0, "обновлено": "<сейчас по Новосибирску>"}'
+  cleanup:
+    - cmd: rclone purge 'gosplan:Госзакупки/_проверка_черри'
+      note: 'только эта тестовая папка, созданная проверкой; владелец разрешает при установке (owner_steps.test_folder). боевые папки не удалять'
+    - rm -rf /tmp/cherry_check
+
+first_run:
+  preconditions:
+    - verification пройдена, cleanup сделан (или тестовая часть пропущена без разрешения — так и записано в отчёте)
+    - "rclone lsf 'gosplan:Госзакупки' — видны Цены/ и К расчёту/"
+    - 'прежний Черри Пикер (если есть) остановлен'
+    - плейсхолдеры <id Смотрителя>, <id Кузнеца> в промте заменены
+    - владелец сказал включить рутину
+  notes:
+    - '«В городе» = 0 во всех счётчиках — рутина молчит'
+    - 'за прогон не больше 3 тендеров; поиск идёт через фонового исполнителя'
+    - 'счётчик.json уже есть на Диске (его ведёт Фатима) — не пересоздавать, только −1'
