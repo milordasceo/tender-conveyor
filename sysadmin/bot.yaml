@@ -11,7 +11,7 @@ docs:
 
 bot:
   name: Сисадмин
-  title: Перенос тендеров в Notion — звено конвейера тендеров
+  title: Проверка папки «К рассмотрению» — звено конвейера тендеров
   description: Берёт рентабельные тендеры из «Госзакупки/К рассмотрению» на Диске, заводит по каждому карточку в базе Notion «Тендеры» (страница «К рассмотрению») — цена, прибыль, расходы, откуда забирать, куда везти, сроки и всё о закупке — и переносит папку тендера в «Госзакупки/CRM». Следит за целью дня и отчитывается Тэндер Мэну.
   prompt_file: sysadmin/bot/prompt.md            # весь файл = системный промт, вставлять как есть (после замены плейсхолдера)
   placeholders:                                  # заменить в prompt_file при создании
@@ -29,11 +29,11 @@ teammates:                                       # только по имени
     relation: 'предыдущее звено; кладёт папки рентабельных тендеров в «К рассмотрению». связь только через папку'
 
 routines:                                        # обе рутины включены
-  - name: Перенос тендеров в Notion
+  - name: Проверка папки «К рассмотрению»
     cron: "0,30 * * * *"                         # в Grok Bot: CRON_TZ=Asia/Novosibirsk 0,30 * * * *
     timezone: Asia/Novosibirsk
     timing: {mode: flexible, earlyMinutes: 15, lateMinutes: 15}
-    prompt_file: sysadmin/bot/routine_transfer_prompt.md  # весь файл = промт рутины, дословно; тем же текстом — запуск по команде
+    prompt_file: sysadmin/bot/routine_check_folder_prompt.md  # весь файл = промт рутины, дословно; тем же текстом — запуск по команде
     command: 'нет одной команды: перенос в Notion, moveto в «CRM», мгновенная проверка цели дня (раз в день, метка goal_sent/<дата>)'
     enable: 'включена, круглосуточно. создать включённой после verification'
   - name: Вечерний отчёт Тэндер Мэну
@@ -68,7 +68,7 @@ dependencies:
     note: 'нужен rclone remote gosplan: с доступом к Drive (настраивает Кузнец). конфиг rclone Сисадмин не читает и не трогает'
 
 config:
-  file: 'нет отдельного файла: правила — в bot/prompt.md и промтах рутин bot/routine_transfer_prompt.md, bot/routine_evening_report_prompt.md'
+  file: 'нет отдельного файла: правила — в bot/prompt.md и промтах рутин bot/routine_check_folder_prompt.md, bot/routine_evening_report_prompt.md'
   current:
     input: 'gosplan:Госзакупки/К рассмотрению'
     output: 'gosplan:Госзакупки/CRM/<номер> — папка переносится целиком (rclone moveto) после того, как строка в Notion есть; «CRM» = уже в Notion, не проверять'
@@ -76,7 +76,7 @@ config:
     card_drive_line: 'Папка на Диске: Госзакупки / CRM / <номер>'
     city_level: 'нет; город — из tender.json delivery.city'
     notion_page: 'К рассмотрению (корень рабочего пространства, значок 📋)'
-    notion_database: 'Тендеры (полностраничная база внутри «К рассмотрению»)'
+    notion_database: 'Тендеры (встроенная inline-база на странице «К рассмотрению»: таблица видна сразу)'
     profit: 'наибольшая «Прибыль варианта X» из tender.md'
     expenses: 'закупка + доставка + налог того же варианта из tender.md (сумма считается)'
     pickup: 'поставщик лучшего варианта из цены.md'
@@ -117,7 +117,7 @@ drive_layout:                                    # id папок не хардк
 
 notion_layout:                                   # id страниц, баз и источников данных не хардкодить — искать по названию
   page: {title: К рассмотрению, icon: "📋", parent: корень рабочего пространства}
-  database: {title: Тендеры, parent: К рассмотрению, full_page: true}
+  database: {title: Тендеры, parent: К рассмотрению, inline: true, how: 'при создании отображать inline: notion-update-data-source с is_inline: true. база уже есть, но открывается ссылкой — тот же вызов'}
   properties:                                    # в этом порядке
     - {name: Номер тендера, type: title}
     - {name: Полная цена, type: number, format: ruble, source: 'tender.json nmck.amount (НМЦК)'}
