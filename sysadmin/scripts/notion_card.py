@@ -14,8 +14,11 @@
 «date:Подача до:start» обязателен: по нему отсортирована таблица «Тендеры» (по возрастанию,
 меньше всего дней до подачи — сверху).
 
-Правило: прибыль и расходы — из раздела «Расчёт рентабельности» в tender.md,
-всё остальное — из tender.json. Поставщики — из цены.md.
+Правило: прибыль и расходы — из раздела «Расчёт рентабельности» в tender.md, по варианту, который выбрал
+Очкарик (решение владельца от 31.10.2026: «Писать прибыль варианта, который выбрал Очкарик»): явно отмеченный
+выбор → вариант, названный лучшим в вердикте → наибольшая «Прибыль варианта X»; «Расходы» = закупка + доставка +
+налог того же варианта; «Откуда забирать» и «2ГИС: откуда» — поставщик того же варианта.
+Всё остальное — из tender.json. Поставщики — из цены.md.
 Ссылки 2ГИС («2ГИС: откуда», «2ГИС: куда», «📍 2ГИС» в теле) — карточка здания:
   https://2gis.ru/<город>/geo/<id здания в 2ГИС>
 Готовые ссылки берутся как есть: у поставщика — строка «- 2ГИС: <ссылка>» варианта в цены.md
@@ -323,6 +326,43 @@ def parse_calc(md: str) -> dict:
     if not variants:
         raise SystemExit("в разделе «Расчёт рентабельности» нет строк «Прибыль варианта X»")
     return {"text": calc.rstrip(), "variants": variants}
+
+
+_LAT2CYR = {"A": "А", "B": "Б", "C": "В", "V": "В"}
+_VAR_LETTER = r"([АБВABC]|[123])(?![\wА-Яа-яЁё])"
+
+
+def _variant_letter(x: str) -> str:
+    x = x.upper()
+    return VARIANTS.get(x, _LAT2CYR.get(x, x))
+
+
+def chosen_variant(calc: dict) -> tuple[str, str]:
+    """Вариант для «Прибыли» и «Расходов» (решение владельца от 31.10.2026: «Писать прибыль варианта, который выбрал
+    Очкарик»): 1) явно выбранный Очкариком в «Расчёте рентабельности» («выбранный вариант Б», «выбран вариант Б»,
+    «берём вариант Б», «Выбор: вариант Б»), даже если он менее прибыльный (например, из-за нацрежима); 2) нет — вариант,
+    названный лучшим в вердикте («лучший вариант А», «вердикт: … вариант А: …» или сумма прибыли одного из вариантов);
+    3) нет и этого — наибольшая «Прибыль варианта X». Возвращает (имя варианта, почему он)."""
+    text, variants = calc["text"], calc["variants"]
+    for m in re.finditer(r"(?:выбранн\w*|выбран\w*|выбира\w*|берём|берем|выбор\s*[:—–-])\s*(?:\*\*|__)?\s*вариант\w*\s*(?:\*\*|__)?\s*"
+                         + _VAR_LETTER, text, re.I):
+        v = _variant_letter(m.group(1))
+        if v in variants:
+            return v, f"выбран Очкариком («{m.group(0).strip()}»)"
+    for line in text.splitlines():
+        if not re.search(r"вердикт", line, re.I):
+            continue
+        clean = line.replace("*", "").replace("_", " ")
+        m = (re.search(r"лучш\w*\s+вариант\w*\s+" + _VAR_LETTER, clean, re.I)
+             or re.search(r"вариант\w*\s+" + _VAR_LETTER + r"\s*[:—–-]", clean, re.I))
+        if m and _variant_letter(m.group(1)) in variants:
+            return _variant_letter(m.group(1)), "назван лучшим в вердикте"
+        sums = [rub_to_float(x) for x in re.findall(r"(−?-?\d[\d\s\u00a0\u202f]*(?:,\d+)?)\s*(?:₽|руб)", clean)]
+        hit = [n for n, v in variants.items() if v["profit"] in sums]
+        if len(hit) == 1:
+            return hit[0], "его прибыль названа лучшей в вердикте"
+    best = max(variants.items(), key=lambda kv: kv[1]["profit"])[0]
+    return best, "выбор не отмечен — наибольшая прибыль"
 
 
 _PRICE_HEAD = re.compile(r"^(?:#{3,4}[ \t]*)?(?:\*\*|__)?Цена[ \t]+(\d+|[АБВ])[ \t]*(?:\*\*|__)?[ \t]*[:—–-]"
@@ -751,7 +791,8 @@ def build(folder: Path, drive_path: str | None):
     prices_file = folder / "цены.md"
     prices = parse_prices(prices_file.read_text(encoding="utf-8")) if prices_file.exists() else []
 
-    best_name, best = max(calc["variants"].items(), key=lambda kv: kv[1]["profit"])
+    best_name, best_why = chosen_variant(calc)  # вариант, выбранный Очкариком (см. chosen_variant)
+    best = calc["variants"][best_name]
     parts = [best[k] for k in ("purchase", "delivery", "tax")]
     expenses = round(sum(p for p in parts if p is not None), 2) if all(p is not None for p in parts) else None
     notice = folder / "Печатная форма извещения.html"
@@ -810,7 +851,7 @@ def build(folder: Path, drive_path: str | None):
         NR_STATUS_PROPERTY: nr_status,  # select: Соблюдается / Не соблюдается / Не подтверждено / Не установлен
         NR_DETAIL_PROPERTY: nr_detail,  # text: мера, ПП, реестр / страна товара
     }
-    ctx = dict(tj=tj, calc=calc, prices=prices, best_name=best_name, best=best,
+    ctx = dict(tj=tj, calc=calc, prices=prices, best_name=best_name, best=best, best_why=best_why,
                expenses=expenses, pickup=pickup, dest=dest, drive_path=drive_path,
                gis_from=gis_from, gis_to=gis_to, city=city)
     return {"icon": icon, "properties": props}, ctx
@@ -932,7 +973,7 @@ def main():
         print(card(ctx), end="")
     elif a.summary:
         p = out["properties"]
-        print(f"{p['Номер тендера']} ({p['Товар']}): прибыль {fmt_rub(p['Прибыль'])} (вариант {ctx['best_name']}), "
+        print(f"{p['Номер тендера']} ({p['Товар']}): прибыль {fmt_rub(p['Прибыль'])} (вариант {ctx['best_name']}: {ctx['best_why']}), "
               f"расходы {fmt_rub(p['Расходы'])}, НМЦК {fmt_rub(p['Полная цена'])}")
         print(f"откуда: {p['Откуда забирать']}")
         print(f"куда: {p['Куда везти']}")

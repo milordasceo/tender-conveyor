@@ -77,9 +77,9 @@ config:
     city_level: 'нет; город — из tender.json delivery.city'
     notion_page: 'К рассмотрению (корень рабочего пространства, значок 📋)'
     notion_database: 'Тендеры (встроенная inline-база на странице «К рассмотрению»: таблица видна сразу)'
-    profit: 'наибольшая «Прибыль варианта X» из tender.md'
+    profit: '«Прибыль варианта X» варианта, выбранного Очкариком в tender.md: явно отмеченный выбор («выбранный вариант Б», в т.ч. менее прибыльный из-за нацрежима) → вариант, названный лучшим в вердикте → наибольшая (решение владельца 31.10.2026 «Писать прибыль варианта, который выбрал Очкарик»); расходы — того же варианта'
     expenses: 'закупка + доставка + налог того же варианта из tender.md (сумма считается)'
-    pickup: 'поставщик лучшего варианта из цены.md'
+    pickup: 'поставщик выбранного варианта из цены.md'
     destination: 'tender.json delivery.address + важное из notes / special_notes'
     other_fields: 'tender.json'
     duplicates: 'проверка по текстовому свойству «Номер тендера» (не по заголовку) перед созданием строки'
@@ -124,14 +124,14 @@ notion_layout:                                   # id страниц, баз и 
     - {name: Товар, type: title, source: 'обобщённое название товара по-русски, 1–3 слова («Перчатки», «Бумажные полотенца», «Полотенца и туалетная бумага»); предложение даёт scripts/notion_card.py по subject и items tender.json, бот может уточнить; заголовок карточки, в таблице — первая колонка с кнопкой «Открыть»'}
     - {name: Номер тендера, type: rich_text, source: 'tender.json number; ключ дедупликации; в таблице скрыт, в карточке — первым в шапке'}
     - {name: Полная цена, type: number, format: ruble, source: 'tender.json nmck.amount (НМЦК)'}
-    - {name: Прибыль, type: number, format: ruble, source: 'tender.md: наибольшая «Прибыль варианта X»'}
+    - {name: Прибыль, type: number, format: ruble, source: 'tender.md: «Прибыль варианта X» варианта, выбранного Очкариком (см. profit выше)'}
     - {name: Расходы, type: number, format: ruble, source: 'tender.md: закупка + доставка + налог того же варианта'}
     - {name: Город, type: select, source: 'tender.json delivery.city'}
     - {name: Категория, type: select, options: {В городе: green, Загород: orange, С ограничениями: red}, source: 'tender.json category'}
     - {name: Количество поставок, type: rich_text, source: 'tender.json supply.deliveries_count'}
-    - {name: Откуда забирать, type: rich_text, source: 'цены.md: поставщик лучшего варианта'}
+    - {name: Откуда забирать, type: rich_text, source: 'цены.md: поставщик выбранного варианта'}
     - {name: Куда везти, type: rich_text, source: 'tender.json delivery.address + notes'}
-    - {name: '2ГИС: откуда', type: url, source: 'адрес поставщика лучшего варианта (только город, улица, дом) → ссылка 2ГИС, см. gis_link'}
+    - {name: '2ГИС: откуда', type: url, source: 'адрес поставщика выбранного варианта (только город, улица, дом) → ссылка 2ГИС, см. gis_link'}
     - {name: '2ГИС: куда', type: url, source: 'delivery.address (только город, улица, дом) → ссылка 2ГИС, см. gis_link'}
     - {name: Подача до, type: date, time: true, source: 'tender.json deadline.iso'}
     - {name: Предмет, type: rich_text, source: 'tender.json subject + количество'}
