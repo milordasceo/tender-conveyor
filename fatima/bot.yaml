@@ -113,6 +113,7 @@ config:
     preferred_days_to_deadline: 4               # 4+ дней — разбирать первыми (по убыванию дней)
     deadline_time_zone: Asia/Novosibirsk        # UTC+7, дни считать по Новосибирску
     deadline_rule: 'фильтр срока — до проверки «только поставки»; папку «Просрочено» не создавать (решение владельца 31.10.2026: «Не переносить, просто не брать в работу» — оставить в «Бланках»); окончание подачи обязательно в tender.json deadline и tender.md'
+    security: 'с 31.10.2026, владелец: «И в дальнейшем всегда фиксировать обеспечение». всегда заполнять tender.json conditions.application_security, conditions.contract_security, conditions.warranty_security: размер в % и/или рублях, способ, освобождения, антидемпинг — как в документах; не требуется — «не требуется», в документах данных нет — «нет данных», пустым не оставлять; в tender.md строки об обеспечении (render_md.py). схема tender.schema.json требует поля, minLength 1'
     counter_time_zone: Asia/Novosibirsk         # UTC+7, задано в counter.py, от часов бокса не зависит
   owner: 'владелец; правила категорий меняются только по его команде (правка bot/prompt.md)'
 
