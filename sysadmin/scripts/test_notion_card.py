@@ -73,11 +73,24 @@ def main():
                 bad += 1
                 print(f"FAIL {name}: {e}")
     s = run(EXAMPLE / "input", "--gis-ids", str(EXAMPLE / "2gis_ids.json"), "--summary").splitlines()[0]
-    want = "0151100007126000034: прибыль 25 317,59 ₽ (вариант А), расходы 15 467,81 ₽, НМЦК 40 785,40 ₽"
+    want = "0151100007126000034 (Перчатки): прибыль 25 317,59 ₽ (вариант А), расходы 15 467,81 ₽, НМЦК 40 785,40 ₽"
     p = json.loads(run(EXAMPLE / "input", "--gis-ids", str(EXAMPLE / "2gis_ids.json")))["properties"]
     if p.get("Товар") != "Перчатки":
         bad += 1
         print(f"FAIL образец Товар: {p.get('Товар')!r}")
+    if list(p)[:2] != ["Товар", "Номер тендера"] or p["Номер тендера"] != "0151100007126000034":
+        bad += 1
+        print(f"FAIL образец: заголовок «Товар» первым, «Номер тендера» текстом: {list(p)[:2]}, {p.get('Номер тендера')!r}")
+    want_props = json.loads((EXAMPLE / "properties.json").read_text(encoding="utf-8"))["properties"]
+    if list(want_props)[:2] != ["Товар", "Номер тендера"]:
+        bad += 1
+        print("FAIL examples properties.json: первыми должны быть «Товар», «Номер тендера»")
+    f = json.loads(run(EXAMPLE / "input", "--gis-ids", str(EXAMPLE / "2gis_ids.json"), "--lookup"))["filters"][0]
+    if (f["property"], f["propertyType"], f["value"]["value"]) != ("Номер тендера", "text", "0151100007126000034"):
+        bad += 1
+        print(f"FAIL --lookup: {f}")
+    else:
+        print("ok   --lookup ищет дубль по тексту «Номер тендера»")
     if s == want:
         print("ok   образец 0151100007126000034")
     else:

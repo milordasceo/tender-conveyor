@@ -4,7 +4,11 @@
 Читает из папки tender.json, tender.md и цены.md (если есть) и печатает:
   без ключей   — JSON {"icon", "properties"} для notion-create-pages (база «Тендеры»);
   --card       — тело карточки в markdown (разделы «Главное» … «Заказчик и закупка»);
-  --summary    — короткая сводка для проверки (прибыль, расходы, откуда, куда).
+  --summary    — короткая сводка для проверки (прибыль, расходы, откуда, куда);
+  --lookup     — фильтр для notion-query-data-sources (rows) — поиск дубля по тексту «Номер тендера».
+
+Заголовок базы (title, кнопка «Открыть» в таблице) — «Товар»; «Номер тендера» — текстовое свойство
+(в таблице скрыто, в карточке первое в шапке). Дубли ищутся по «Номер тендера», не по заголовку.
 
 Формулы «Чистая прибыль» и «Дней до подачи» Notion считает сам — в JSON их нет.
 «date:Подача до:start» обязателен: по нему отсортирована таблица «Тендеры» (по возрастанию,
@@ -27,7 +31,7 @@ https://2gis.ru/<город>/search/<адрес> (и предупреждени�
   --offline        — в сеть не ходить (id только из --gis-ids, иначе ссылка-поиск);
   --gis-ids FILE   — JSON {"адрес": "id"} с уже известными id (пример — examples/…/2gis_ids.json).
 «Чистая прибыль» — свойство-формула базы, скрипт её не заполняет.
-«Товар» — предложение обобщённого названия (1–3 слова) по subject и items из tender.json; бот может уточнить.
+«Товар» (заголовок) — предложение обобщённого названия (1–3 слова) по subject и items из tender.json; бот может уточнить.
 Форматы терпимы к вариациям: строки расчёта жирные или нет («- **Прибыль варианта А:** X ₽»,
 «- Прибыль варианта А (по ценам А): X ₽», «Закупка: 700 × 59 = 41 300 ₽», ₽/руб.); суммы в tender.json —
 числом, строкой или объектом {"amount": …}; tender.json — вложенная схема (delivery/supply/conditions/deadline)
@@ -569,7 +573,8 @@ def build(folder: Path, drive_path: str | None):
     icon = next((e for pat, e in ICONS if re.search(pat, text)), "📦")
 
     props = {
-        "Номер тендера": tj["number"],
+        "Товар": product_name(tj.get("subject", ""), items),  # title: кнопка «Открыть» в таблице
+        "Номер тендера": str(tj["number"]),  # text: ключ дублей, в таблице скрыт
         "Полная цена": nmck,
         "Прибыль": best["profit"],
         "Расходы": expenses,
@@ -583,13 +588,22 @@ def build(folder: Path, drive_path: str | None):
         "date:Подача до:start": tj.get("deadline", {}).get("iso"),
         "date:Подача до:is_datetime": 1,
         "Предмет": subj,
-        "Товар": product_name(tj.get("subject", ""), items),
         "Ссылка": tj.get("url"),  # обычное имя: префикс userDefined: только для свойств id/url
     }
     ctx = dict(tj=tj, calc=calc, prices=prices, best_name=best_name, best=best,
                expenses=expenses, pickup=pickup, dest=dest, drive_path=drive_path,
                gis_from=gis_from, gis_to=gis_to, city=city)
     return {"icon": icon, "properties": props}, ctx
+
+
+DEDUP_PROPERTY = "Номер тендера"  # текстовое свойство; заголовок базы — «Товар»
+
+
+def lookup_filter(number: str) -> dict:
+    """Фильтр notion-query-data-sources (mode rows) для поиска строки по номеру тендера."""
+    return {"type": "group", "operator": "and", "filters": [
+        {"type": "property", "property": DEDUP_PROPERTY, "propertyType": "text",
+         "operator": "string_is", "value": {"type": "exact", "value": str(number)}}]}
 
 
 def card(ctx) -> str:
@@ -680,6 +694,7 @@ def main():
     ap.add_argument("folder", type=Path, help="папка с tender.json, tender.md, цены.md")
     ap.add_argument("--card", action="store_true", help="печатать тело карточки (markdown)")
     ap.add_argument("--summary", action="store_true", help="печатать короткую сводку")
+    ap.add_argument("--lookup", action="store_true", help="печатать фильтр поиска дубля по «Номер тендера»")
     ap.add_argument("--drive-path", help="путь папки тендера на Диске для раздела «Заказчик и закупка»")
     ap.add_argument("--offline", action="store_true", help="не ходить в 2ГИС за id зданий (ссылки-поиск или --gis-ids)")
     ap.add_argument("--gis-ids", type=Path, help='JSON {"адрес": "id здания 2ГИС"} с уже известными id')
@@ -691,11 +706,13 @@ def main():
         if not (a.folder / f).exists():
             sys.exit(f"нет {a.folder / f}")
     out, ctx = build(a.folder, a.drive_path)
-    if a.card:
+    if a.lookup:
+        print(json.dumps(lookup_filter(out["properties"]["Номер тендера"]), ensure_ascii=False, indent=2))
+    elif a.card:
         print(card(ctx), end="")
     elif a.summary:
         p = out["properties"]
-        print(f"{p['Номер тендера']}: прибыль {fmt_rub(p['Прибыль'])} (вариант {ctx['best_name']}), "
+        print(f"{p['Номер тендера']} ({p['Товар']}): прибыль {fmt_rub(p['Прибыль'])} (вариант {ctx['best_name']}), "
               f"расходы {fmt_rub(p['Расходы'])}, НМЦК {fmt_rub(p['Полная цена'])}")
         print(f"откуда: {p['Откуда забирать']}")
         print(f"куда: {p['Куда везти']}")
