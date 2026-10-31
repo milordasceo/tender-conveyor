@@ -40,6 +40,9 @@ https://2gis.ru/<город>/search/<адрес> (и предупреждени�
 «Нацрежим» (select: Соблюдается / Не соблюдается / Не подтверждено / Не установлен) и «Нацрежим: подробно» (текст) —
 из строки «Нацрежим» в расчёте Очкарика (tender.md); нет строки или статуса в ней — мера из conditions.national_regime,
 tender.md или «Печатная форма извещения.html», происхождение товара лучшего варианта — из цены.md («Нацрежим:», «Страна:», «Реестр:»).
+«Нацрежим обязателен» (select: Да / Нет / Нет данных; решение владельца от 31.10.2026) — из conditions.national_regime.mandatory:
+true → «Да», false → «Нет», null / нет поля / national_regime строкой (старый формат) → «Нет данных».
+national_regime — строка (как есть) или объект {mandatory, measure, basis, confirmation, note} → читаемый текст; словарь не выводится.
 «Товар» (заголовок) — предложение обобщённого названия (1–3 слова) по subject и items из tender.json; бот может уточнить.
 Форматы терпимы к вариациям: строки расчёта жирные или нет («- **Прибыль варианта А:** X ₽»,
 «- Прибыль варианта А (по ценам А): X ₽», «Закупка: 700 × 59 = 41 300 ₽», ₽/руб.); суммы в tender.json —
@@ -649,6 +652,8 @@ def security_text(conditions: dict, md: str, full_price) -> str:
 
 NR_STATUS_PROPERTY = "Нацрежим"            # select; решение владельца от 31.10.2026: «Типа соблюдается или нет»
 NR_DETAIL_PROPERTY = "Нацрежим: подробно"  # text: мера, ПП, реестр / страна товара
+NR_MANDATORY_PROPERTY = "Нацрежим обязателен"  # select; решение владельца от 31.10.2026
+NR_MANDATORY_OPTIONS = ("Да", "Нет", "Нет данных")
 NR_OPTIONS = ("Соблюдается", "Не соблюдается", "Не подтверждено", "Не установлен")
 _NR_MEASURE = re.compile(r"запрет|ограничен|преимуществ", re.I)
 _NR_NONE = re.compile(r"^\s*(?:национальный\s+режим\s*)?(?:не\s+установлен|не\s+применя\w*|нет)\b", re.I)
@@ -656,15 +661,33 @@ _NR_EAEU = re.compile(r"росси|\bрф\b|беларус|белорус|каз
 _NR_NO_DATA = re.compile(r"не\s+подтвержд|нет\s+данных|не\s+указан|неизвестн|^\s*[—–-]?\s*$", re.I)
 
 
-def nr_text(nr) -> str | None:
-    """conditions.national_regime: строка как есть или объект Фатимы {mandatory, measure, basis, confirmation, note}
-    → текст как строка «Нацрежим» в tender.md: «Обязателен: ДА/НЕТ/нет данных — мера; основание: …; подтверждение: …»."""
+def nr_mandatory(nr) -> str:
+    """«Нацрежим обязателен» (решение владельца от 31.10.2026) из conditions.national_regime.mandatory:
+    true → «Да», false → «Нет»; null, нет поля, старый строковый формат или что-то иное → «Нет данных»."""
     if not isinstance(nr, dict):
-        return nr
-    mand = {True: "ДА", False: "НЕТ"}.get(nr.get("mandatory"), "нет данных")
-    out = f"Обязателен: {mand} — {nr.get('measure') or 'нет данных'}"
-    for key, label in (("basis", "основание"), ("confirmation", "подтверждение"), ("note", "примечание")):
-        v = str(nr.get(key) or "").strip()
+        return "Нет данных"
+    m = nr.get("mandatory")
+    if isinstance(m, str):  # на случай «true»/«false» строкой
+        m = {"true": True, "да": True, "false": False, "нет": False}.get(m.strip().lower())
+    return {True: "Да", False: "Нет"}[m] if isinstance(m, bool) else "Нет данных"
+
+
+def nr_text(nr) -> str | None:
+    """conditions.national_regime: старый формат — строка (как есть); новый — объект Фатимы
+    {mandatory, measure, basis, confirmation, note} → читаемый русский текст
+    «Обязателен: да/нет/нет данных — мера: …; основание: …; чем подтверждать: …; примечание: …».
+    Сырой словарь никуда не выводится."""
+    if nr is None or isinstance(nr, str):
+        return nr.strip() if isinstance(nr, str) and nr.strip() else None
+    if isinstance(nr, list):
+        return "; ".join(t for t in (nr_text(x) for x in nr) if t) or None
+    if not isinstance(nr, dict):
+        return str(nr)
+    mand = nr_mandatory(nr).lower()
+    out = f"Обязателен: {mand} — мера: {str(nr.get('measure') or '').strip() or 'нет данных'}"
+    for key, label in (("basis", "основание"), ("confirmation", "чем подтверждать"), ("note", "примечание")):
+        v = nr.get(key)
+        v = "; ".join(map(str, v)) if isinstance(v, list) else str(v or "").strip()
         if v and v.lower() not in ("нет", "-", "—"):
             out += f"; {label}: {v}"
     return out
@@ -850,6 +873,7 @@ def build(folder: Path, drive_path: str | None):
         SECURITY_PROPERTY: security_text(tj.get("conditions", {}), md, nmck),  # text: в таблице скрыто
         NR_STATUS_PROPERTY: nr_status,  # select: Соблюдается / Не соблюдается / Не подтверждено / Не установлен
         NR_DETAIL_PROPERTY: nr_detail,  # text: мера, ПП, реестр / страна товара
+        NR_MANDATORY_PROPERTY: nr_mandatory(tj.get("conditions", {}).get("national_regime")),  # select: Да / Нет / Нет данных
     }
     ctx = dict(tj=tj, calc=calc, prices=prices, best_name=best_name, best=best, best_why=best_why,
                expenses=expenses, pickup=pickup, dest=dest, drive_path=drive_path,
@@ -980,7 +1004,7 @@ def main():
         print(f"2ГИС откуда: {p['2ГИС: откуда'] or '—'}")
         print(f"2ГИС куда: {p['2ГИС: куда'] or '—'}")
         print(f"обеспечение: {p[SECURITY_PROPERTY]}")
-        print(f"нацрежим: {p[NR_STATUS_PROPERTY]} — {p[NR_DETAIL_PROPERTY]}")
+        print(f"нацрежим: {p[NR_STATUS_PROPERTY]} (обязателен: {p[NR_MANDATORY_PROPERTY]}) — {p[NR_DETAIL_PROPERTY]}")
     else:
         print(json.dumps(out, ensure_ascii=False, indent=2))
 
