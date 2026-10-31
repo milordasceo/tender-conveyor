@@ -31,6 +31,9 @@ https://2gis.ru/<город>/search/<адрес> (и предупреждени�
   --offline        — в сеть не ходить (id только из --gis-ids, иначе ссылка-поиск);
   --gis-ids FILE   — JSON {"адрес": "id"} с уже известными id (пример — examples/…/2gis_ids.json).
 «Чистая прибыль» — свойство-формула базы, скрипт её не заполняет.
+«Обеспечение» (текст, в таблице скрыто) — «Заявка: …; контракт: X% ≈ N ₽ (от «Полной цены»); гарантия: …»
+плюс освобождение и антидемпинг (ст. 37 44-ФЗ), если указаны; из conditions.*_security tender.json, иначе из tender.md;
+процент без суммы — N = X% от «Полной цены» до рубля; данных нет — «нет данных».
 «Товар» (заголовок) — предложение обобщённого названия (1–3 слова) по subject и items из tender.json; бот может уточнить.
 Форматы терпимы к вариациям: строки расчёта жирные или нет («- **Прибыль варианта А:** X ₽»,
 «- Прибыль варианта А (по ценам А): X ₽», «Закупка: 700 × 59 = 41 300 ₽», ₽/руб.); суммы в tender.json —
@@ -531,9 +534,79 @@ def normalize(tj: dict, folder: Path) -> dict:
     return t
 
 
+SECURITY_PROPERTY = "Обеспечение"  # rich_text; в таблице скрыто, в карточке — обычное свойство (решение владельца от 31.10.2026)
+_MD_SECURITY = {
+    "application_security": r"Обеспечение\s+заявк\w*",
+    "contract_security": r"Обеспечение\s+(?:исполнени\w*(?:\s+контракт\w*)?|контракт\w*)",
+    "warranty_security": r"Обеспечение\s+гарант\w*(?:\s+обязательств)?",
+}
+_NO_SECURITY = re.compile(r"^\s*(?:не\s+требуется|не\s+установлен\w*|не\s+предусмотрен\w*|нет)\b", re.I)
+
+
+def md_security(md: str) -> dict:
+    """Обеспечение из tender.md: строки «- [**]Обеспечение заявки/контракта/исполнения/гарантийных обязательств:[**] …»."""
+    out = {}
+    for key, label in _MD_SECURITY.items():
+        m = re.search(r"^[ \t]*[-*][ \t]*(?:\*\*)?" + label + r"[ \t]*:?[ \t]*(?:\*\*)?[ \t]*:?[ \t]*(.+)$", md, re.M | re.I)
+        if m and m.group(1).strip():
+            out[key] = m.group(1).strip()
+    return out
+
+
+def rub_int(x: float) -> str:
+    return f"{round(x):,}".replace(",", " ") + " ₽"
+
+
+def security_part(raw, full_price) -> tuple[str, list]:
+    """Одна часть обеспечения → (текст, примечания: освобождение, антидемпинг по ст. 37).
+    Процент есть, суммы нет — N = X% от «Полной цены», до рубля. Сумма есть, процента нет — процент считается по ней."""
+    if raw in (None, "", [], {}):
+        return "нет данных", []
+    text = "; ".join(map(str, raw)) if isinstance(raw, list) else str(raw)
+    notes = []
+    for clause in re.split(r"[;()]", text):
+        c = clause.strip(" .,—–-")
+        if re.search(r"освобожд", c, re.I) and c not in notes:
+            notes.append(c)
+        elif re.search(r"демпинг|ст\.\s*37\b", c, re.I) and "антидемпинг по ст. 37" not in notes:
+            notes.append("антидемпинг по ст. 37")
+    if _NO_SECURITY.match(text):
+        return "не требуется", notes
+    pm = re.search(r"(\d+(?:[.,]\d+)?)\s*%", text)
+    sm = re.search(NUM + r"\s*" + RUB, text)
+    pct = float(pm.group(1).replace(",", ".")) if pm else None
+    amount = rub_to_float(sm.group(1).strip()) if sm else None
+    if pct is not None:
+        if amount is None and full_price is not None:
+            amount = full_price * pct / 100
+        pct_s = f"{pct:g}".replace(".", ",")
+        return (f"{pct_s}% ≈ {rub_int(amount)} (от «Полной цены»)" if amount is not None else f"{pct_s}%"), notes
+    if amount is not None:
+        if full_price:
+            pct_s = f"{round(amount / full_price * 100, 2):g}".replace(".", ",")
+            return f"{rub_int(amount)} (≈ {pct_s}% от «Полной цены»; процента в tender.json и tender.md нет)", notes
+        return rub_int(amount), notes
+    return text, notes
+
+
+def security_text(conditions: dict, md: str, full_price) -> str:
+    """Свойство «Обеспечение»: «Заявка: …; контракт: X% ≈ N ₽ (от «Полной цены»); гарантия: …[; освобождение …][; антидемпинг по ст. 37]».
+    Источник — tender.json conditions.*_security (или плоские bid_security/contract_security/warranty_security),
+    нет поля — строка из tender.md; нет и там — «нет данных». Ничего не додумывается."""
+    from_md = md_security(md or "")
+    parts, notes = [], []
+    for key, label in (("application_security", "Заявка"), ("contract_security", "контракт"),
+                       ("warranty_security", "гарантия")):
+        text, n = security_part(first(conditions.get(key), from_md.get(key)), full_price)
+        parts.append(f"{label}: {text}")
+        notes += [x for x in n if x not in notes]
+    return "; ".join(parts + notes)
+
+
 def build(folder: Path, drive_path: str | None):
     tj = normalize(json.loads((folder / "tender.json").read_text(encoding="utf-8")), folder)
-    calc = parse_calc((folder / "tender.md").read_text(encoding="utf-8"))
+    md = (folder / "tender.md").read_text(encoding="utf-8")
+    calc = parse_calc(md)
     prices_file = folder / "цены.md"
     prices = parse_prices(prices_file.read_text(encoding="utf-8")) if prices_file.exists() else []
 
@@ -589,6 +662,7 @@ def build(folder: Path, drive_path: str | None):
         "date:Подача до:is_datetime": 1,
         "Предмет": subj,
         "Ссылка": tj.get("url"),  # обычное имя: префикс userDefined: только для свойств id/url
+        SECURITY_PROPERTY: security_text(tj.get("conditions", {}), md, nmck),  # text: в таблице скрыто
     }
     ctx = dict(tj=tj, calc=calc, prices=prices, best_name=best_name, best=best,
                expenses=expenses, pickup=pickup, dest=dest, drive_path=drive_path,
@@ -718,6 +792,7 @@ def main():
         print(f"куда: {p['Куда везти']}")
         print(f"2ГИС откуда: {p['2ГИС: откуда'] or '—'}")
         print(f"2ГИС куда: {p['2ГИС: куда'] or '—'}")
+        print(f"обеспечение: {p[SECURITY_PROPERTY]}")
     else:
         print(json.dumps(out, ensure_ascii=False, indent=2))
 
