@@ -34,6 +34,9 @@ https://2gis.ru/<город>/search/<адрес> (и предупреждени�
 «Обеспечение» (текст, в таблице скрыто) — «Заявка: …; контракт: X% ≈ N ₽ (от «Полной цены»); гарантия: …»
 плюс освобождение и антидемпинг (ст. 37 44-ФЗ), если указаны; из conditions.*_security tender.json, иначе из tender.md;
 процент без суммы — N = X% от «Полной цены» до рубля; данных нет — «нет данных».
+«Нацрежим» (select: Соблюдается / Не соблюдается / Не подтверждено / Не установлен) и «Нацрежим: подробно» (текст) —
+из строки «Нацрежим» в расчёте Очкарика (tender.md); нет строки или статуса в ней — мера из conditions.national_regime,
+tender.md или «Печатная форма извещения.html», происхождение товара лучшего варианта — из цены.md («Нацрежим:», «Страна:», «Реестр:»).
 «Товар» (заголовок) — предложение обобщённого названия (1–3 слова) по subject и items из tender.json; бот может уточнить.
 Форматы терпимы к вариациям: строки расчёта жирные или нет («- **Прибыль варианта А:** X ₽»,
 «- Прибыль варианта А (по ценам А): X ₽», «Закупка: 700 × 59 = 41 300 ₽», ₽/руб.); суммы в tender.json —
@@ -340,7 +343,8 @@ def parse_prices(md: str) -> list:
             info = {"price": pm.group(2).strip()}
             for key, label in (("supplier", "Где купить"), ("phone", "Телефон"),
                                ("link", r"(?:Ссылка|Сайт|URL)"), ("pack", "Фасовка"),
-                               ("gis", r"(?:2ГИС|2GIS)")):
+                               ("gis", r"(?:2ГИС|2GIS)"), ("nr", r"Нацрежим"),
+                               ("country", r"Страна(?:\s+происхождения)?"), ("registry", r"Реестр\w*(?:\s+запис\w*)?")):
                 fm = re.search(rf"^\s*[-*]\s*(?:\*\*)?{label}(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.+)$", rest, re.M | re.I)
                 if fm:
                     info[key] = fm.group(1).strip()
@@ -603,6 +607,125 @@ def security_text(conditions: dict, md: str, full_price) -> str:
     return "; ".join(parts + notes)
 
 
+NR_STATUS_PROPERTY = "Нацрежим"            # select; решение владельца от 31.10.2026: «Типа соблюдается или нет»
+NR_DETAIL_PROPERTY = "Нацрежим: подробно"  # text: мера, ПП, реестр / страна товара
+NR_OPTIONS = ("Соблюдается", "Не соблюдается", "Не подтверждено", "Не установлен")
+_NR_MEASURE = re.compile(r"запрет|ограничен|преимуществ", re.I)
+_NR_NONE = re.compile(r"^\s*(?:национальный\s+режим\s*)?(?:не\s+установлен|не\s+применя\w*|нет)\b", re.I)
+_NR_EAEU = re.compile(r"росси|\bрф\b|беларус|белорус|казахстан|армени|киргиз|кыргыз|еаэс|евразийск", re.I)
+_NR_NO_DATA = re.compile(r"не\s+подтвержд|нет\s+данных|не\s+указан|неизвестн|^\s*[—–-]?\s*$", re.I)
+
+
+def _nr_status_word(text: str) -> str | None:
+    """Статус, названный в строке прямо (строка «Нацрежим» Очкарика)."""
+    low = text.lower()
+    for pat, st in ((r"не\s+соблюда", "Не соблюдается"), (r"не\s+подтвержд", "Не подтверждено"),
+                    (r"не\s+установлен", "Не установлен"), (r"(?<!не )соблюда", "Соблюдается")):
+        if re.search(pat, low):
+            return st
+    return None
+
+
+def _calc_span(md: str) -> tuple[int, int] | None:
+    """Границы раздела «Расчёт рентабельности» в tender.md."""
+    m = _CALC_HEAD.search(md or "")
+    if not m:
+        return None
+    nxt = re.search(rf"^#{{1,{len(m.group(1))}}}\s", md[m.end():], re.M)
+    return m.start(), (m.end() + nxt.start()) if nxt else len(md)
+
+
+def calc_nr_line(md: str) -> str | None:
+    """Строка Очкарика «- Нацрежим: …» (без жирного) в разделе «Расчёт рентабельности» tender.md."""
+    span = _calc_span(md)
+    if not span:
+        return None
+    body = md[span[0]:span[1]]
+    g = re.search(r"^[ \t]*[-*]?[ \t]*(?:\*\*|__)?Нацрежим(?:\*\*|__)?[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*(.+?)[ \t]*$", body, re.M | re.I)
+    return g.group(1).strip() if g else None
+
+
+def md_nr_line(md: str) -> str | None:
+    """Строка Фатимы «- **Нацрежим:** …» (или «- Национальный режим (…): …») — что сказано в извещении; ищется вне расчёта."""
+    span = _calc_span(md or "")
+    md = (md[:span[0]] + md[span[1]:]) if span else (md or "")
+    g = re.search(r"^[ \t]*[-*][ \t]*(?:\*\*)?(Нацрежим|Национальный\s+режим)([^:\n]*):[ \t]*(?:\*\*)?[ \t]*(.+?)[ \t]*$",
+                  md or "", re.M | re.I)
+    if not g:
+        return None
+    extra = g.group(2).replace("*", "").strip()
+    return f"{g.group(3).strip()} {extra}".strip() if extra else g.group(3).strip()
+
+
+def notice_nr(html_text: str) -> str | None:
+    """Мера нацрежима из «Печатная форма извещения.html»: таблица после «о мерах по предоставлению национального режима»:
+    позиция — вид требования. Нет таблицы — None; таблица без запретов/ограничений/преимуществ — «не установлен»."""
+    import html as _html
+    t = re.sub(r"<script.*?</script>|<style.*?</style>", "", html_text or "", flags=re.S | re.I)
+    lines = [x.strip() for x in _html.unescape(re.sub(r"<[^>]+>", "\n", t)).split("\n") if x.strip()]
+    start = next((i for i, x in enumerate(lines) if "о мерах по предоставлению национального режима" in x), None)
+    if start is None:
+        return None
+    end = next((k for k in range(start, len(lines)) if re.search(r"Обеспечение заявки|Перечень прикрепл", lines[k])), len(lines))
+    rows, item = [], None
+    for x in lines[start + 1:end]:
+        if re.match(r"^(Объект закупки|Вид требования|Обоснование невозможности)", x) or re.fullmatch(r"[\d.\-]+", x):
+            continue
+        mm = re.match(r"^(Запрет|Ограничение|Преимущество)\b", x)
+        if mm and item:
+            rows.append(f"{item} — {mm.group(1).lower()}")
+            item = None
+        elif not mm and not re.match(r"^(оказываемых|услуг|Запрет, не применяется|Правительства|при осуществлении|муниципальных)", x):
+            item = x
+    if not rows:
+        return "не установлен"
+    return "по извещению (ст. 14 44-ФЗ, ПП РФ № 1875): " + "; ".join(rows)
+
+
+def national_regime(conditions: dict, md: str, prices: list, best_name: str, notice_html: str | None = None) -> tuple[str, str]:
+    """(«Нацрежим», «Нацрежим: подробно»).
+    В tender.md две строки о нацрежиме: «- **Нацрежим:** …» от Фатимы (что в извещении) и «- Нацрежим: …» без жирного
+    от Очкарика в «Расчёте рентабельности». Статус — из строки Очкарика, «подробно» — строка Фатимы (+ текст Очкарика).
+    Строки Очкарика нет или статус в ней не назван — запасной путь: мера из строки Фатимы / conditions.national_regime /
+    извещения, происхождение товара лучшего варианта — из цены.md («Нацрежим:», «Страна:», «Реестр:»).
+    Статус запасного пути: не установлен → «Не установлен»; у всех позиций РФ/ЕАЭС или номер реестровой записи →
+    «Соблюдается»; хоть одна позиция явно иностранная → «Не соблюдается»; иначе → «Не подтверждено». Ничего не додумывается."""
+    och = calc_nr_line(md)
+    measure = first(md_nr_line(md), conditions.get("national_regime"), notice_nr(notice_html) if notice_html else None)
+    measure = "; ".join(map(str, measure)) if isinstance(measure, list) else (str(measure).strip() if measure else None)
+    if och and _nr_status_word(och):
+        return _nr_status_word(och), f"{measure or 'мера: нет данных'}; Очкарик: {och}"
+    if not measure or re.fullmatch(r"(?i)нет\s+данных\.?", measure):
+        return "Не подтверждено", "мера: нет данных (нет в tender.md, tender.json и извещении); товар: нет данных"
+    if _NR_NONE.match(measure) and not _NR_MEASURE.search(measure):
+        return "Не установлен", f"в извещении не установлен ({measure})"
+    goods, verdicts = [], []
+    for it in prices:
+        info = it["variants"].get(best_name) or {}
+        nr = info.get("nr") or ""
+        country = info.get("country") or (re.search(r"страна\s*[:—–-]?\s*([^,;]+)", nr, re.I) or [None, None])[1]
+        reg = info.get("registry") or (re.search(r"реестр\w*\s*[:—–-]?\s*([^,;]+)", nr, re.I) or [None, None])[1]
+        country, reg = (country or "").strip(), (reg or "").strip()
+        reg_ok = bool(reg) and not _NR_NO_DATA.search(reg) and bool(re.search(r"\d", reg))
+        if reg_ok or (country and _NR_EAEU.search(country)):
+            verdicts.append("ok")
+        elif country and not _NR_NO_DATA.search(country):
+            verdicts.append("foreign")
+        else:
+            verdicts.append("unknown")
+        goods.append(f"{it['title']}: страна — {country or 'нет данных'}, реестровая запись — {reg if reg_ok else 'нет данных'}")
+    if verdicts and all(v == "ok" for v in verdicts):
+        status = "Соблюдается"
+    elif "foreign" in verdicts:
+        status = "Не соблюдается"
+    else:
+        status = "Не подтверждено"
+    src = f"товар варианта {best_name} (цены.md): " + "; ".join(goods) if goods else "товар: нет данных (цены.md)"
+    if status == "Не подтверждено" and goods and all("нет данных" in g for g in goods):
+        src = f"товар варианта {best_name}: страна происхождения и реестровая запись — нет данных (в цены.md не указаны)"
+    return status, f"{measure}; {src}"
+
+
 def build(folder: Path, drive_path: str | None):
     tj = normalize(json.loads((folder / "tender.json").read_text(encoding="utf-8")), folder)
     md = (folder / "tender.md").read_text(encoding="utf-8")
@@ -613,6 +736,9 @@ def build(folder: Path, drive_path: str | None):
     best_name, best = max(calc["variants"].items(), key=lambda kv: kv[1]["profit"])
     parts = [best[k] for k in ("purchase", "delivery", "tax")]
     expenses = round(sum(p for p in parts if p is not None), 2) if all(p is not None for p in parts) else None
+    notice = folder / "Печатная форма извещения.html"
+    nr_status, nr_detail = national_regime(tj.get("conditions", {}), md, prices, best_name,
+                                           notice.read_text(encoding="utf-8", errors="replace") if notice.exists() else None)
     nmck = money(tj.get("nmck"))
     if expenses is None and nmck is not None:            # строк закупки/доставки/налога нет — НМЦК − прибыль
         expenses = round(nmck - best["profit"], 2)
@@ -663,6 +789,8 @@ def build(folder: Path, drive_path: str | None):
         "Предмет": subj,
         "Ссылка": tj.get("url"),  # обычное имя: префикс userDefined: только для свойств id/url
         SECURITY_PROPERTY: security_text(tj.get("conditions", {}), md, nmck),  # text: в таблице скрыто
+        NR_STATUS_PROPERTY: nr_status,  # select: Соблюдается / Не соблюдается / Не подтверждено / Не установлен
+        NR_DETAIL_PROPERTY: nr_detail,  # text: мера, ПП, реестр / страна товара
     }
     ctx = dict(tj=tj, calc=calc, prices=prices, best_name=best_name, best=best,
                expenses=expenses, pickup=pickup, dest=dest, drive_path=drive_path,
@@ -793,6 +921,7 @@ def main():
         print(f"2ГИС откуда: {p['2ГИС: откуда'] or '—'}")
         print(f"2ГИС куда: {p['2ГИС: куда'] or '—'}")
         print(f"обеспечение: {p[SECURITY_PROPERTY]}")
+        print(f"нацрежим: {p[NR_STATUS_PROPERTY]} — {p[NR_DETAIL_PROPERTY]}")
     else:
         print(json.dumps(out, ensure_ascii=False, indent=2))
 
