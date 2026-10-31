@@ -115,6 +115,43 @@ P
 "$PY" "$HERE/validate_tender.py" "$T/lost.json" >"$T/out" 2>&1; c=$?
 [ $c = 0 ] && grep -q "special_notes пусто" "$T/out" && ok "validate: подъём в условиях, а пометок нет" || { bad "validate: пропавшие пометки"; cat "$T/out"; }
 
+# --- нацрежим: conditions.national_regime — объект, «Обязателен: ДА/НЕТ/нет данных»
+grep -qx -- "- \*\*Нацрежим:\*\* Обязателен: ДА — ограничение; основание: ст. 14 44-ФЗ, ПП РФ от 23.12.2024 № 1875; подтверждение: .*" "$T/tender.md" \
+  && ok "render_md: нацрежим — Обязателен: ДА" || bad "render_md: нацрежим ДА"
+"$PY" - "$EX" "$T" <<'P2'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8")); t = sys.argv[2]
+def put(name, nr):
+    x = json.loads(json.dumps(d)); x["conditions"]["national_regime"] = nr
+    json.dump(x, open(f"{t}/nr_{name}.json", "w", encoding="utf-8"), ensure_ascii=False)
+na = {"basis": "не применимо", "confirmation": "не применимо", "note": "нет"}
+put("no", dict(na, mandatory=False, measure="не установлен"))
+put("pref", {"mandatory": False, "measure": "преимущество", "basis": "ст. 14 44-ФЗ, ПП РФ от 23.12.2024 № 1875 (приложение 3)",
+             "confirmation": "страна происхождения товара", "note": "скидка 15% при оценке заявок"})
+put("null", {"mandatory": None, "measure": "нет данных", "basis": "нет данных", "confirmation": "нет данных",
+             "note": "в извещении нет раздела о нацрежиме, файл извещения не открылся"})
+put("str", "Ограничение (ст. 14 44-ФЗ)")
+put("mismatch", dict(na, mandatory=True, measure="не установлен"))
+put("pref_true", dict(na, mandatory=True, measure="преимущество"))
+put("nullnote", dict(na, mandatory=None, measure="нет данных"))
+put("badmeasure", dict(na, mandatory=False, measure="нету"))
+put("empty", dict(na, mandatory=False, measure="не установлен", basis=" "))
+put("nomand", {k: v for k, v in dict(na, measure="не установлен").items()})
+put("extra", dict(na, mandatory=False, measure="не установлен", lishnee="x"))
+put("strbool", dict(na, mandatory="да", measure="ограничение"))
+P2
+for f in no pref null; do expect "validate: нацрежим $f" 0 "$PY" "$HERE/validate_tender.py" "$T/nr_$f.json"; done
+for f in str mismatch pref_true nullnote badmeasure empty nomand extra strbool; do
+  expect "validate: нацрежим $f = код 1" 1 "$PY" "$HERE/validate_tender.py" "$T/nr_$f.json"; done
+for f in no pref null; do "$PY" "$HERE/render_md.py" "$T/nr_$f.json" -o "$T/nr_$f.md" >/dev/null; done
+grep -qx -- "- \*\*Нацрежим:\*\* Обязателен: НЕТ — не установлен; основание: не применимо; подтверждение: не применимо" "$T/nr_no.md" \
+  && ok "render_md: нацрежим — Обязателен: НЕТ" || bad "render_md: нацрежим НЕТ"
+grep -q -- "^- \*\*Нацрежим:\*\* Обязателен: НЕТ — преимущество; .*скидка 15%" "$T/nr_pref.md" \
+  && ok "render_md: нацрежим — преимущество = НЕТ" || bad "render_md: нацрежим преимущество"
+grep -q -- "^- \*\*Нацрежим:\*\* Обязателен: нет данных — нет данных; .*примечание: в извещении нет раздела" "$T/nr_null.md" \
+  && ok "render_md: нацрежим — нет данных с причиной" || bad "render_md: нацрежим нет данных"
+[ "$(grep -c "Нацрежим" "$T/nr_no.md")" = 1 ] && ok "render_md: строка «Нацрежим» одна" || bad "render_md: строк «Нацрежим» не одна"
+
 # --- dgis_link.py (офлайн: фейковый HTML поиска 2ГИС, в сеть не ходит)
 G="$T/dgis"; mkdir -p "$G"
 "$PY" - "$G" <<'P'

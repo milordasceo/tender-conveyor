@@ -78,7 +78,19 @@
         "experience": {"type": "string", "minLength": 1, "description": "«не требуется» или какой (доп. требования ч. 2 ст. 31 44-ФЗ и т.п.)"},
         "participant_requirements": {"type": "string", "minLength": 1},
         "smp_sono": {"type": "string", "minLength": 1},
-        "national_regime": {"type": "string", "minLength": 1},
+        "national_regime": {
+          "type": "object",
+          "required": ["mandatory", "measure", "basis", "confirmation", "note"],
+          "additionalProperties": false,
+          "description": "Нацрежим по извещению (правило владельца 31.10.2026: «Нацрежим обязателен или нет. В зависимости от этого предпринимать действия.»). mandatory: true — запрет или ограничение допуска иностранных товаров (ст. 14 44-ФЗ, ПП РФ № 1875 или другое); false — не установлен или только преимущество (например, скидка 15% при оценке); null — непонятно, причина в note",
+          "properties": {
+            "mandatory": {"type": ["boolean", "null"], "description": "true — «Обязателен: ДА», false — «Обязателен: НЕТ», null — «Обязателен: нет данных»"},
+            "measure": {"type": "string", "enum": ["запрет", "ограничение", "преимущество", "не установлен", "нет данных"], "description": "запрет/ограничение ⇔ mandatory true; преимущество/не установлен ⇔ false; нет данных ⇔ null"},
+            "basis": {"type": "string", "minLength": 1, "description": "статья и ПП, например «ст. 14 44-ФЗ, ПП РФ от 23.12.2024 № 1875»; нет — «не применимо» или «нет данных»"},
+            "confirmation": {"type": "string", "minLength": 1, "description": "чем подтверждать: номер реестровой записи РПП/евразийского реестра или страна происхождения; нет — «не применимо» или «нет данных»"},
+            "note": {"type": "string", "minLength": 1, "description": "причина при null и прочие детали (пункт извещения, приложение ПП и т.п.); нечего добавить — «нет»"}
+          }
+        },
         "application_security": {"type": "string", "minLength": 1},
         "contract_security": {"type": "string", "minLength": 1},
         "warranty_security": {"type": "string", "minLength": 1},

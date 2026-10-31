@@ -6,6 +6,9 @@
 Ошибки (код 1) — файл не по схеме, заливать нельзя.
 Ссылка 2ГИС delivery.map_url обязательна (https://2gis.ru/<город>/geo/<id> или …/search/<адрес>,
 без ?stat=; заполняет dgis_link.py --tender); нет или не по шаблону — ошибка.
+conditions.national_regime — объект {mandatory, measure, basis, confirmation, note}:
+mandatory true — запрет/ограничение, false — преимущество/не установлен, null — нет данных
+(причина в note); mandatory и measure не сходятся или старая строка вместо объекта — ошибка.
 Предупреждения (код 0) — перечитать документы: сумма позиций не равна НМЦК,
 категория расходится с условиями, пустые особые пометки при подъёме/разгрузке в условиях, «не указано» в важных полях и т.п.
 Без зависимостей: поддержано подмножество JSON Schema, которое использует схема
@@ -114,6 +117,28 @@ def sanity(d, folder_name):
     return w
 
 
+NR_MEASURES = {True: ("запрет", "ограничение"), False: ("преимущество", "не установлен"), None: ("нет данных",)}
+
+
+def national_regime_errors(d):
+    """conditions.national_regime: mandatory и measure должны сходиться.
+    true — запрет/ограничение; false — преимущество/не установлен; null — нет данных (причина в note)."""
+    c = d.get("conditions") if isinstance(d, dict) else None
+    nr = c.get("national_regime") if isinstance(c, dict) else None
+    if not isinstance(nr, dict) or "mandatory" not in nr or "measure" not in nr:
+        return []                                       # не объект или нет полей — уже ошибка схемы
+    m, ms = nr["mandatory"], nr["measure"]
+    if not (m is None or isinstance(m, bool)):
+        return []
+    if ms not in NR_MEASURES[m]:
+        want = " или ".join(f"«{x}»" for x in NR_MEASURES[m])
+        return [f"$.conditions.national_regime: mandatory {json.dumps(m)}, а measure {ms!r} — нужно {want}"]
+    e = []
+    if m is None and isinstance(nr.get("note"), str) and nr["note"].strip().lower() in ("нет", "-", "—", ""):
+        e.append("$.conditions.national_regime.note: при mandatory null напиши причину, почему непонятно")
+    return e
+
+
 def map_url_errors(d):
     """delivery.map_url: только https://2gis.ru/<город>/geo/<id> или …/search/<адрес>, город — из delivery.city."""
     dl = d.get("delivery") if isinstance(d, dict) else None
@@ -152,6 +177,7 @@ def main():
     errs = []
     check(d, schema, "$", errs)
     errs += map_url_errors(d)
+    errs += national_regime_errors(d)
     warns = sanity(d, a.folder_name) if isinstance(d, dict) and not errs else []
     for e in errs:
         print(f"ОШИБКА: {e}")

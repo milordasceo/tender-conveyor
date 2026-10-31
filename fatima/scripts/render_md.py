@@ -25,6 +25,19 @@ def num(v):
     return str(v)
 
 
+MANDATORY = {True: "ДА", False: "НЕТ", None: "нет данных"}
+
+
+def national_regime_line(nr):
+    """Строка «Нацрежим» для tender.md: сначала «Обязателен: ДА/НЕТ/нет данных», дальше мера, основание, подтверждение."""
+    s = (f"Обязателен: {MANDATORY[nr['mandatory']]} — {nr['measure']}; основание: {nr['basis']}; "
+         f"подтверждение: {nr['confirmation']}")
+    note = nr["note"].strip()
+    if note.lower() not in ("нет", "-", "—"):
+        s += f"; примечание: {note}"
+    return f"- **Нацрежим:** {s}"
+
+
 def render(d):
     c, s, dl, cu = d["conditions"], d["supply"], d["delivery"], d["customer"]
     cur = d["nmck"].get("currency", "RUB")
@@ -55,7 +68,7 @@ def render(d):
          f"- **Опыт:** {c['experience']}",
          f"- **Требования к участникам:** {c['participant_requirements']}",
          f"- **СМП / СОНО:** {c['smp_sono']}",
-         f"- **Нацрежим:** {c['national_regime']}",
+         national_regime_line(c["national_regime"]),
          f"- **Обеспечение заявки:** {c['application_security']}",
          f"- **Обеспечение контракта:** {c['contract_security']}",
          f"- **Обеспечение гарантийных обязательств:** {c['warranty_security']}",
