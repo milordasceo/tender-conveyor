@@ -616,9 +616,25 @@ _NR_EAEU = re.compile(r"росси|\bрф\b|беларус|белорус|каз
 _NR_NO_DATA = re.compile(r"не\s+подтвержд|нет\s+данных|не\s+указан|неизвестн|^\s*[—–-]?\s*$", re.I)
 
 
+def nr_text(nr) -> str | None:
+    """conditions.national_regime: строка как есть или объект Фатимы {mandatory, measure, basis, confirmation, note}
+    → текст как строка «Нацрежим» в tender.md: «Обязателен: ДА/НЕТ/нет данных — мера; основание: …; подтверждение: …»."""
+    if not isinstance(nr, dict):
+        return nr
+    mand = {True: "ДА", False: "НЕТ"}.get(nr.get("mandatory"), "нет данных")
+    out = f"Обязателен: {mand} — {nr.get('measure') or 'нет данных'}"
+    for key, label in (("basis", "основание"), ("confirmation", "подтверждение"), ("note", "примечание")):
+        v = str(nr.get(key) or "").strip()
+        if v and v.lower() not in ("нет", "-", "—"):
+            out += f"; {label}: {v}"
+    return out
+
+
 def _nr_status_word(text: str) -> str | None:
-    """Статус, названный в строке прямо (строка «Нацрежим» Очкарика)."""
-    low = text.lower()
+    """Статус в строке Очкарика «Нацрежим: <что установлено>; выбранный вариант <А/Б> — <статус>»:
+    берётся из части после «выбранный вариант … —», без неё — из всей строки."""
+    m = re.search(r"выбранн\w*\s+вариант\w*\s*\S*\s*[—–-]+\s*(.+)$", text, re.I)
+    low = (m.group(1) if m else text).lower()
     for pat, st in ((r"не\s+соблюда", "Не соблюдается"), (r"не\s+подтвержд", "Не подтверждено"),
                     (r"не\s+установлен", "Не установлен"), (r"(?<!не )соблюда", "Соблюдается")):
         if re.search(pat, low):
@@ -691,13 +707,15 @@ def national_regime(conditions: dict, md: str, prices: list, best_name: str, not
     Статус запасного пути: не установлен → «Не установлен»; у всех позиций РФ/ЕАЭС или номер реестровой записи →
     «Соблюдается»; хоть одна позиция явно иностранная → «Не соблюдается»; иначе → «Не подтверждено». Ничего не додумывается."""
     och = calc_nr_line(md)
-    measure = first(md_nr_line(md), conditions.get("national_regime"), notice_nr(notice_html) if notice_html else None)
+    measure = first(md_nr_line(md), nr_text(conditions.get("national_regime")), notice_nr(notice_html) if notice_html else None)
     measure = "; ".join(map(str, measure)) if isinstance(measure, list) else (str(measure).strip() if measure else None)
     if och and _nr_status_word(och):
         return _nr_status_word(och), f"{measure or 'мера: нет данных'}; Очкарик: {och}"
     if not measure or re.fullmatch(r"(?i)нет\s+данных\.?", measure):
         return "Не подтверждено", "мера: нет данных (нет в tender.md, tender.json и извещении); товар: нет данных"
-    if _NR_NONE.match(measure) and not _NR_MEASURE.search(measure):
+    nr_obj = conditions.get("national_regime")
+    if (isinstance(nr_obj, dict) and str(nr_obj.get("measure", "")).strip().lower() == "не установлен") or \
+            ((_NR_NONE.match(measure) or re.search(r"не\s+установлен", measure, re.I)) and not _NR_MEASURE.search(measure)):
         return "Не установлен", f"в извещении не установлен ({measure})"
     goods, verdicts = [], []
     for it in prices:
@@ -835,7 +853,7 @@ def card(ctx) -> str:
           f"- **Лицензии / разрешения:** {c.get('licenses_permits', '—')}",
           f"- **Опыт:** {c.get('experience', '—')}",
           f"- **СМП / СОНО:** {c.get('smp_sono', '—')}",
-          f"- **Нацрежим:** {c.get('national_regime', '—')}"]
+          f"- **Нацрежим:** {nr_text(c.get('national_regime')) or '—'}"]
     for i, it in enumerate(tj.get("items", []), 1):
         a = "да" if it.get("analog_allowed") else "нет"
         note = f" — {it['analog_note']}" if it.get("analog_note") else ""
