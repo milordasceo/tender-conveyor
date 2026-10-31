@@ -27,6 +27,7 @@ https://2gis.ru/<город>/search/<адрес> (и предупреждени�
   --offline        — в сеть не ходить (id только из --gis-ids, иначе ссылка-поиск);
   --gis-ids FILE   — JSON {"адрес": "id"} с уже известными id (пример — examples/…/2gis_ids.json).
 «Чистая прибыль» — свойство-формула базы, скрипт её не заполняет.
+«Товар» — предложение обобщённого названия (1–3 слова) по subject и items из tender.json; бот может уточнить.
 Форматы терпимы к вариациям: строки расчёта жирные или нет («- **Прибыль варианта А:** X ₽»,
 «- Прибыль варианта А (по ценам А): X ₽», «Закупка: 700 × 59 = 41 300 ₽», ₽/руб.); суммы в tender.json —
 числом, строкой или объектом {"amount": …}; tender.json — вложенная схема (delivery/supply/conditions/deadline)
@@ -351,6 +352,43 @@ def short_subject(subject: str) -> str:
     return m.group(1) if m else (subject or "")
 
 
+# «Товар»: обобщённое название, 1–3 слова. Ищем по предмету и позициям, порядок — как в тексте предмета
+PRODUCTS = [
+    (r"перчат", "Перчатки"), (r"полотенц", "Полотенца"), (r"туалетн\w* бумаг", "Туалетная бумага"),
+    (r"салфет", "Салфетки"), (r"мыл[оа]", "Мыло"), (r"моющ|чистящ", "Моющие средства"),
+    (r"мешк\w* для мусора|мусорн\w* мешк", "Мусорные мешки"), (r"канцел|ручк|тетрад|карандаш", "Канцтовары"),
+    (r"(офисн|писч)\w* бумаг|бумаг\w* для офисн|бумаг\w* а4", "Офисная бумага"), (r"картридж", "Картриджи"),
+    (r"мебел|стол|стул|шкаф", "Мебель"), (r"компьют|ноутбук|оргтехник", "Оргтехника"),
+    (r"спецодежд|одежд", "Спецодежда"), (r"обув", "Обувь"), (r"посуд", "Посуда"),
+    (r"ламп|светильник", "Лампы"), (r"кабел", "Кабель"), (r"краск", "Краска"), (r"инструмент", "Инструменты"),
+    (r"книг|учебник", "Книги"), (r"бензин|топлив", "Топливо"), (r"шприц", "Шприцы"), (r"бинт|перевяз", "Перевязка"),
+    (r"продукт|питани", "Продукты"),
+]
+
+
+def product_name(subject: str, items: list) -> str:
+    """Предложение для «Товар»: 1–3 слова по-русски («Перчатки», «Полотенца и туалетная бумага»).
+    Бот может уточнить. Нет совпадения — первые слова предмета без «на 2027 год» и количеств."""
+    subj = short_subject(subject or "")
+    text = (subj + " " + " ".join(str(i.get("name", "")) for i in items or [])).lower()
+    found = []
+    for pat, name in PRODUCTS:
+        m = re.search(pat, text)
+        if m and name not in [n for _, n in found]:
+            found.append((m.start(), name))
+    names = [n for _, n in sorted(found)]
+    if names:
+        if len(names) == 1:
+            return names[0]
+        two = f"{names[0]} и {names[1][0].lower()}{names[1][1:]}"
+        return two if len(names) == 2 and len(two.split()) <= 4 else names[0]
+    base = re.sub(r"\s+на\s+\d{4}\s*(г\.?|год\w*)?.*$", "", subj, flags=re.I)
+    base = re.sub(r"[,;—–(].*$|\d.*$", "", base).strip()
+    base = re.sub(r"^(поставк\w*|приобретени\w*|закупк\w*|оказани\w*)\s+", "", base, flags=re.I)
+    words = [w for w in base.split() if re.fullmatch(r"[А-Яа-яЁё-]{2,}", w)][:3]
+    return " ".join(words)[:1].upper() + " ".join(words)[1:] if words else ""
+
+
 def num(x) -> str:
     if isinstance(x, dict):
         x = first(x.get("value"), x.get("amount"), "")
@@ -545,6 +583,7 @@ def build(folder: Path, drive_path: str | None):
         "date:Подача до:start": tj.get("deadline", {}).get("iso"),
         "date:Подача до:is_datetime": 1,
         "Предмет": subj,
+        "Товар": product_name(tj.get("subject", ""), items),
         "Ссылка": tj.get("url"),  # обычное имя: префикс userDefined: только для свойств id/url
     }
     ctx = dict(tj=tj, calc=calc, prices=prices, best_name=best_name, best=best,
