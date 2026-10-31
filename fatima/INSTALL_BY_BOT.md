@@ -44,7 +44,7 @@ cp -r /tmp/tender-conveyor/fatima/examples/0151100007126000034 /home/box/fatima/
 chmod 755 /home/box/fatima/scripts/*.py /home/box/fatima/scripts/selftest.sh
 ```
 
-Соответствие путей — `deploy`. `/home/box/fatima/{work,txt,backup,state}` уже есть — не затирать.
+Соответствие путей — `deploy`. `/home/box/fatima/{work,txt,backup,state}` уже есть — не затирать. Создать пустой `/home/box/fatima/state/reported_skipped.txt`, если его нет (`touch`; номера отложенных по сроку тендеров, уже названных в сводке).
 
 КТ: `ls /home/box/fatima/scripts` — 9 файлов: `check_ready.py`, `counter.py`, `dgis_link.py`, `extract_text.py`, `render_md.py`, `README.md`, `selftest.sh`, `tender.schema.json`, `validate_tender.py`.
 

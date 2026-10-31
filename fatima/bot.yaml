@@ -71,6 +71,10 @@ deploy:
     note: 'selftest.sh ищет образец в ../examples'
   # рабочие папки создать пустыми: /home/box/fatima/{work,txt,backup,state}. уже есть — не затирать
 
+state_files:
+  counter_copy: /home/box/fatima/state/счётчик.json
+  reported_skipped: /home/box/fatima/state/reported_skipped.txt   # номера отложенных по сроку тендеров, уже названных в сводке; по номеру в строке. нет — создать пустым, есть — не затирать. номер дописывается после отправки сводки
+
 dependencies:
   python:
     min_version: "3.10"
@@ -108,7 +112,7 @@ config:
     min_days_to_deadline: 3                     # с 31.10.2026: меньше 3 полных дней до окончания подачи или срок не найден — не разбирать, оставить в «Бланках», в сводку
     preferred_days_to_deadline: 4               # 4+ дней — разбирать первыми (по убыванию дней)
     deadline_time_zone: Asia/Novosibirsk        # UTC+7, дни считать по Новосибирску
-    deadline_rule: 'фильтр срока — до проверки «только поставки»; папку «Просрочено» не создавать (куда класть — ждём ответа владельца); окончание подачи обязательно в tender.json deadline и tender.md'
+    deadline_rule: 'фильтр срока — до проверки «только поставки»; папку «Просрочено» не создавать (решение владельца 31.10.2026: «Не переносить, просто не брать в работу» — оставить в «Бланках»); окончание подачи обязательно в tender.json deadline и tender.md'
     counter_time_zone: Asia/Novosibirsk         # UTC+7, задано в counter.py, от часов бокса не зависит
   owner: 'владелец; правила категорий меняются только по его команде (правка bot/prompt.md)'
 
