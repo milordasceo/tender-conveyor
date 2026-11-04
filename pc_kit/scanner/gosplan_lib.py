@@ -328,6 +328,7 @@ def _note_429(headers, log):
         pass
     shown = raw if raw is not None else "нет"
     log(f"429: интервал {old:g} -> {new:g} с, пауза {wait:g} с (Retry-After={shown})")
+    log(f"⏸ сервер просит не спешить (лимит запросов, 429): жду {wait:g} с")
     return wait
 
 

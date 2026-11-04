@@ -462,6 +462,7 @@ def fetch_source(base_url, source, params, api_key, page_size, max_pages, pause_
         if not isinstance(batch, list):
             raise RuntimeError(f"неожиданный ответ API: {str(batch)[:200]}")
         out.extend(batch)
+        log(f"[{LAW.get(source, source)}] страница {skip // page_size + 1}: получено {len(batch)}, всего {len(out)}")
         if len(batch) < page_size:
             break
         skip += page_size
@@ -493,7 +494,24 @@ def cleanup_reports(out_dir, keep_days):
             p.unlink()
 
 
+def tender_line(pos, rec, verdict):
+    # строка для человека: [12/217] номер название, сумма, срок — взял / пропуск: причина
+    title = " ".join(str(rec.get("object_info") or "без названия").split())
+    if len(title) > 60:
+        title = title[:57] + "..."
+    price = rec.get("max_price")
+    try:
+        price = f"{float(price):,.0f} ₽".replace(",", " ")
+    except (TypeError, ValueError):
+        price = "сумма ?"
+    dl = str(rec.get("collecting_finished_at") or "без срока")[:16].replace("T", " ")
+    return f"{pos} {rec.get('purchase_number') or '?'} {title}, {price}, до {dl} — {verdict}"
+
+
 def print_summary(found, new, exported):
+    sys.stdout.flush()
+    print(f"=== ИТОГ: найдено {found}, новых {new}, выгружено {exported} ===", file=sys.stderr)
+    sys.stderr.flush()
     print(f"найдено: {found}")
     print(f"новых: {new}")
     print(f"выгружено: {exported}")
@@ -1144,6 +1162,10 @@ def drain_pending(reg, reg_path, f, base_url, api_key, timeout, pause_ms, log, l
     rclone_failures = 0
     skipped = _empty_skipped()
     idx = 0
+    total_q = len(pending)
+    done_q = 0
+    if total_q:
+        log(f"=== выгрузка: в очереди {total_q} ===")
     while idx < len(pending):
         if limit and limit > 0 and exported >= limit:
             break
@@ -1155,6 +1177,8 @@ def drain_pending(reg, reg_path, f, base_url, api_key, timeout, pause_ms, log, l
             save_registry(reg_path, reg)
             continue
         work = None
+        done_q += 1
+        pos = f"[{done_q}/{total_q}]"
         try:
             detail = gp.fetch_detail(base_url, rec["source"], num, api_key, timeout, pause_ms, log)
             verdict = city_verdict(rec, detail, cities)
@@ -1165,6 +1189,8 @@ def drain_pending(reg, reg_path, f, base_url, api_key, timeout, pause_ms, log, l
             dl = window_verdict(deadline_raw, f)
             if dl != "ok":
                 _skip_by_window(reg, num, rec, dl, deadline_raw, city_key, now, f, log)
+                log(tender_line(pos, {**rec, "collecting_finished_at": deadline_raw},
+                                "пропуск: " + window_reason(dl, f)))
                 skipped[dl].append(num)
                 pending.pop(idx)
                 reg["pending"] = pending
@@ -1173,6 +1199,7 @@ def drain_pending(reg, reg_path, f, base_url, api_key, timeout, pause_ms, log, l
                 continue
             if strict and verdict is False:
                 log(f"{num}: место поставки вне города ({', '.join(cities)}) — пропуск")
+                log(tender_line(pos, rec, "пропуск: другой город"))
                 reg["tenders"][num] = {"status": "outside", "city": city_key, "at": now}
                 pending.pop(idx)
                 reg["pending"] = pending
@@ -1184,6 +1211,8 @@ def drain_pending(reg, reg_path, f, base_url, api_key, timeout, pause_ms, log, l
             dl = window_verdict(deadline_raw, f)
             if dl != "ok":
                 _skip_by_window(reg, num, rec, dl, deadline_raw, city_key, now, f, log)
+                log(tender_line(pos, {**rec, "collecting_finished_at": deadline_raw},
+                                "пропуск: " + window_reason(dl, f)))
                 skipped[dl].append(num)
                 pending.pop(idx)
                 reg["pending"] = pending
@@ -1226,10 +1255,13 @@ def drain_pending(reg, reg_path, f, base_url, api_key, timeout, pause_ms, log, l
             exported += 1
             fail_streak = 0
             log(f"{num}: выгружено ({label})")
+            log(tender_line(pos, {**rec, "collecting_finished_at": deadline_raw},
+                            f"ВЗЯЛ, выгружен в Сток; осталось {len(pending)}"))
         except gp.ApiError as e:
             fail_streak += 1
             idx += 1
             log(f"{num}: ошибка API, оставляю в очереди ({fail_streak} подряд): {e}")
+            log(tender_line(pos, rec, "ошибка сервера, попробую в следующий раз"))
             if fail_streak >= 5:
                 stopped = True
                 log("5 сбоев API подряд — сервер лежит, стоп до следующего прогона")
@@ -1238,6 +1270,7 @@ def drain_pending(reg, reg_path, f, base_url, api_key, timeout, pause_ms, log, l
             fail_streak += 1
             idx += 1
             log(f"{num}: сбой выгрузки, оставляю в очереди ({fail_streak} подряд): {e}")
+            log(tender_line(pos, rec, f"ошибка записи: {e}"))
             if fail_streak >= 5:
                 stopped = True
                 log("5 сбоев подряд — стоп до следующего прогона")
@@ -1284,7 +1317,7 @@ def main(argv=None):
     args = parse_args(argv)
 
     def log(msg):
-        print(msg, file=sys.stderr)
+        print(msg, file=sys.stderr, flush=True)
 
     cfg_path = Path(args.config)
     if not cfg_path.exists():
@@ -1365,27 +1398,46 @@ def main(argv=None):
 
         stats[src] = len(raw)
         log(f"[{src}] получено записей: {len(raw)}")
+        log(f"=== {LAW.get(src, src)}: найдено {len(raw)}, проверяю каждую ===")
+        known = set()
+        if reg is not None:
+            known = {n for n, e in (reg.get("tenders") or {}).items()
+                     if not (isinstance(e, dict) and e.get("status") in RETRYABLE_STATUSES)}
+        pos_n = 0
         allowed_types = _codes_for_source(f, src)
         dropped_pt = 0
         dropped_dl = 0
         no_dl = 0
         for item in raw:
             rec = norm_record(item, src, base_url)
+            pos_n += 1
+            pos = f"[{pos_n}/{len(raw)}]"
             if allowed_types is not None and rec.get("purchase_type") not in allowed_types:
                 dropped_pt += 1
+                log(tender_line(pos, rec, "пропуск: не тот вид закупки"))
                 continue
             if f.get("keywords") and not keyword_ok(rec["object_info"], f["keywords"], f.get("keywords_all", False)):
+                log(tender_line(pos, rec, "пропуск: нет ключевых слов"))
                 continue
             # список: город режем в --collect и в --export --city-strict.
             # мягкий --export город не отбрасывает — пометка попадает в tender.json
             if ((not exporting) or args.city_strict) and f.get("delivery_cities") and rec["delivery_places"]:
                 if not any(gp.city_match(p, c) for c in f["delivery_cities"] for p in rec["delivery_places"]):
+                    log(tender_line(pos, rec, "пропуск: другой город"))
                     continue
             if not client_deadline_ok(rec, f, allow_missing=True):
                 dropped_dl += 1
+                log(tender_line(pos, rec, "пропуск: срок подачи не в окне"))
                 continue
             if not client_since_ok(rec, f):
+                log(tender_line(pos, rec, "пропуск: опубликован раньше"))
                 continue
+            if rec.get("purchase_number") in known:
+                log(tender_line(pos, rec, "пропуск: уже выгружен раньше"))
+            elif not rec.get("collecting_finished_at"):
+                log(tender_line(pos, rec, "подходит, без даты в списке — проверю по карточке"))
+            else:
+                log(tender_line(pos, rec, "подходит"))
             if not rec.get("collecting_finished_at"):
                 # дату окончания проверит карточка (в выгрузке и --collect); без неё не выгружаем
                 rec["deadline_missing"] = True

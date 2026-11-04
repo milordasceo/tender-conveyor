@@ -5,6 +5,7 @@
 import configparser
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -122,6 +123,22 @@ def write_configs(s):
     LOGS_DIR.mkdir(exist_ok=True)
 
 
+# технические строки сканера (адреса, сводка для ботов, дубли по номеру) — только в журнал
+TECH_LINE = re.compile(r"^(\[fz\d+\]|найдено:|новых:|выгружено:|since:|429:|pending:|dry-run:|\d{6,}: )")
+
+
+def say(msg):
+    # вывод в консоль, только если она есть (у pythonw/планировщика stdout = None)
+    out = sys.stdout
+    if out is None:
+        return
+    try:
+        out.write(msg + "\n")
+        out.flush()
+    except Exception:
+        pass
+
+
 def check_dir(path, name):
     if not Path(path).is_dir():
         die(f"папка «{name}» не найдена: {path}\nПроверьте путь в settings.ini и что Google Drive для ПК запущен.")
@@ -139,20 +156,31 @@ def cmd_scan(extra):
     dry = "--dry-run" in extra
     if not dry:
         check_dir(s["stock"], "Сток")
-    args = [sys.executable, str(SCANNER_DIR / "gosplan_scanner.py"), "-c", str(SCANNER_DIR / "config.yaml")]
+    args = [sys.executable, "-u", str(SCANNER_DIR / "gosplan_scanner.py"), "-c", str(SCANNER_DIR / "config.yaml")]
     # в dry-run «Сток» нужен только чтобы сравнить с реестром (новых); запись не идёт
     if not dry or Path(s["stock"]).is_dir():
         args += ["--export", s["stock"]]
     args += extra
     log = LOGS_DIR / "scanner.log"
-    print(f"Сканер запущен, подробный журнал: {log}")
+    say(f"Сканер запущен{' (ПРОБНЫЙ, без выгрузки)' if dry else ''}. Журнал: {log}")
+    say("Запросы к gosplan идут не чаще раза в ~10 с — это нормально, ждите.")
     with open(log, "a", encoding="utf-8") as lf:
         lf.write(f"\n===== запуск {__import__('datetime').datetime.now():%Y-%m-%d %H:%M:%S} =====\n")
         lf.flush()
-        p = subprocess.run(args, cwd=SCANNER_DIR, env=env(), stdout=subprocess.PIPE, stderr=lf, text=True, encoding="utf-8")
-    print(p.stdout)
-    with open(log, "a", encoding="utf-8") as lf:
-        lf.write(p.stdout + f"код выхода: {p.returncode}\n")
+        p = subprocess.Popen(args, cwd=SCANNER_DIR, env=env(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, encoding="utf-8", errors="replace", bufsize=1)
+        for line in p.stdout:
+            lf.write(line)
+            lf.flush()
+            # технические строки (адреса запросов, сводка для ботов) — только в журнал
+            if not TECH_LINE.match(line):
+                say(line.rstrip("\n"))
+        p.wait()
+        lf.write(f"код выхода: {p.returncode}\n")
+    if p.returncode not in (0, 3):
+        say(f"Сканер завершился с ошибкой (код {p.returncode}), подробности в {log}")
+    elif p.returncode == 3:
+        say("Часть тендеров осталась в очереди — выгрузятся при следующем запуске.")
     # 0 — всё выгружено, 3 — часть осталась в очереди до следующего запуска (это нормально)
     return 0 if p.returncode in (0, 3) else p.returncode
 
@@ -268,7 +296,8 @@ def main(argv):
 if __name__ == "__main__":
     for st in (sys.stdout, sys.stderr):
         try:
-            st.reconfigure(encoding="utf-8", errors="replace")
+            if st is not None:
+                st.reconfigure(errors="replace")
         except Exception:
             pass
     sys.exit(main(sys.argv[1:]))

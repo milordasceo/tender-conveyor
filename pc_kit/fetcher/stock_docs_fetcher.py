@@ -813,6 +813,8 @@ class Fetcher:
         self._invalid_tender_logged: set[str] = set()
         self._last_empty_stock_log: float | None = None
         self._need_download_pause = False
+        self._title: dict[str, str] = {}
+        self._stats = {"moved": 0, "files": 0, "errors": 0, "failed": 0}
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -882,7 +884,10 @@ class Fetcher:
         if announce_idle:
             console_line(f"В Стоке папок: {len(entries)}")
         processed = 0
-        for folder in entries:
+        self._stats = {"moved": 0, "files": 0, "errors": 0, "failed": 0}
+        self._pos_total = len(entries)
+        for pos, folder in enumerate(entries, 1):
+            self._pos = pos
             try:
                 if self.process_folder(folder):
                     processed += 1
@@ -897,6 +902,17 @@ class Fetcher:
                     LOGGER.exception("%s: не удалось записать статус после сбоя", folder.name)
         if announce_idle and processed == 0:
             console_line("Нечего обрабатывать.")
+        if processed:
+            st = self._stats
+            try:
+                left = sum(1 for p in stock.iterdir() if p.is_dir())
+            except OSError:
+                left = -1
+            console_line(
+                f"=== ИТОГ прохода: обработано тендеров {processed}, перенесено в Бланки {st['moved']}, "
+                f"скачано файлов {st['files']}, ошибок скачивания {st['errors']}, провалено {st['failed']}; "
+                f"осталось в Стоке {left if left >= 0 else '?'} ==="
+            )
         return processed
 
     def process_folder(self, folder: Path) -> bool:
@@ -922,6 +938,7 @@ class Fetcher:
             return False
         self._invalid_tender_logged.discard(name)
 
+        self._title[name] = tender.get("subject") or tender.get("title") or tender.get("name") or ""
         docs = tender.get("documents")
         if not isinstance(docs, list) or len(docs) == 0:
             return self._record_no_documents(folder, prev, tender)
@@ -992,6 +1009,7 @@ class Fetcher:
         stamp = now_local().strftime("%Y-%m-%d %H:%M:%S")
         total = len(status["documents"])
         console_line(f"[{stamp}] {folder.name}: {total}/{total} ok -> Бланки")
+        self._stats["moved"] = self._stats.get("moved", 0) + 1
         LOGGER.info("%s: перенесён в %s", folder.name, dest)
         return True
 
@@ -1009,6 +1027,13 @@ class Fetcher:
                 used_names.add(stored)
 
         total_docs = len(status["documents"])
+        need = sum(1 for rec in status["documents"] if not file_is_ok(folder, rec))
+        title = " ".join(str(self._title.get(folder.name) or "").split())[:60]
+        console_line(
+            f"[{getattr(self, '_pos', '?')}/{getattr(self, '_pos_total', '?')}] тендер {folder.name}"
+            f"{' ' + title if title else ''}: документов {total_docs}, качаю {need} "
+            f"(попытка {status['attempts']}/{self.cfg.max_attempts})"
+        )
         for idx, rec in enumerate(status["documents"], 1):
             if file_is_ok(folder, rec):
                 stored = rec.get("file")
@@ -1027,6 +1052,7 @@ class Fetcher:
                 rec["attempts"] = int(rec.get("attempts") or 0) + 1
                 used_names.add(filename)
                 console_line(f"    ok, {size} байт")
+                self._stats["files"] = self._stats.get("files", 0) + 1
                 self._write_status(folder, status)
             except DownloadError as exc:
                 rec["status"] = "error"
@@ -1034,6 +1060,7 @@ class Fetcher:
                 rec["http_status"] = exc.http_status
                 rec["attempts"] = int(rec.get("attempts") or 0) + 1
                 console_line(f"    ошибка: {exc}")
+                self._stats["errors"] = self._stats.get("errors", 0) + 1
                 LOGGER.warning("%s: документ %s: %s", folder.name, rec.get("name"), exc)
                 self._write_status(folder, status)
             except KeyboardInterrupt:
@@ -1043,6 +1070,7 @@ class Fetcher:
                 rec["error"] = truncate_error(f"{type(exc).__name__}: {exc}")
                 rec["attempts"] = int(rec.get("attempts") or 0) + 1
                 console_line(f"    сбой: {type(exc).__name__}: {exc}")
+                self._stats["errors"] = self._stats.get("errors", 0) + 1
                 LOGGER.exception("%s: сбой документа %s", folder.name, rec.get("name"))
                 self._write_status(folder, status)
 
@@ -1063,6 +1091,7 @@ class Fetcher:
                 f"ошибка (попытка {attempts}/{max_attempts}), провал"
             )
             LOGGER.error("%s: исчерпаны попытки (%s), папка больше не берётся", folder.name, attempts)
+            self._stats["failed"] = self._stats.get("failed", 0) + 1
             return True
 
         nxt = now_local() + timedelta(minutes=self.cfg.retry_delay_min)
