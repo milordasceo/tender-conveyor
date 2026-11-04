@@ -30,12 +30,12 @@ teammates:                                       # только по имени
 
 routines:                                        # обе рутины включены
   - name: Проверка папки «К рассмотрению»
-    cron: "0,30 * * * *"                         # в Grok Bot: CRON_TZ=Asia/Novosibirsk 0,30 * * * *
+    cron: "0,30 21-23,0-7 * * *"                 # в Grok Bot: CRON_TZ=Asia/Novosibirsk 0,30 21-23,0-7 * * *; ночной режим, решение владельца 04.11.2026
     timezone: Asia/Novosibirsk
-    timing: {mode: flexible, earlyMinutes: 15, lateMinutes: 15}
+    timing: {mode: flexible, earlyMinutes: 0, lateMinutes: 15}
     prompt_file: sysadmin/bot/routine_check_folder_prompt.md  # весь файл = промт рутины, дословно; тем же текстом — запуск по команде
     command: 'нет одной команды: перенос в Notion, moveto в «CRM», мгновенная проверка цели дня (раз в день, метка goal_sent/<дата>)'
-    enable: 'включена, круглосуточно. создать включённой после verification'
+    enable: 'включена, только ночью: 21:00–07:30 по Новосибирску; прогон в 07:30 забирает всё за ночь, в 08:00 — «Сроки заявок в CRM», в 08:30 — утренний отчёт. создать включённой после verification'
   - name: Утренний отчёт Тэндер Мэну
     cron: "30 8 * * *"                           # в Grok Bot: CRON_TZ=Asia/Novosibirsk 30 8 * * *
     timezone: Asia/Novosibirsk
@@ -137,9 +137,11 @@ notion_layout:                                   # id страниц, баз и 
     - {name: Предмет, type: rich_text, source: 'tender.json subject + количество'}
     - {name: Ссылка, type: url, source: 'tender.json url'}
     - {name: Обеспечение, type: rich_text, source: 'tender.json conditions.application_security / contract_security / warranty_security (плоская схема — bid_security, contract_security, warranty_security), нет — tender.md; формат «Заявка: …; контракт: X% ≈ N ₽ (от «Полной цены»); гарантия: …» + освобождение / антидемпинг ст. 37, если указаны; процент без суммы — N = X% от «Полной цены» до рубля; нет данных — «нет данных». у каждого нового тендера (решение владельца 31.10.2026); в таблице скрыто, в карточке видно. строку даёт scripts/notion_card.py'}
-    - {name: Нацрежим, type: select, options: [Соблюдается, Не соблюдается, Не подтверждено, Не установлен], source: 'решение владельца 31.10.2026 «И поле такое добавить в CRM. Типа соблюдается или нет.»; статус — из строки Очкарика «- Нацрежим: …» (без жирного) в «Расчёте рентабельности» tender.md; нет строки или статуса — по мере (строка Фатимы «- **Нацрежим:** …» / tender.json conditions.national_regime / извещение) и происхождению товара лучшего варианта в цены.md: Россия/ЕАЭС или номер реестровой записи — Соблюдается, явно иностранный — Не соблюдается, не указано — Не подтверждено, не установлен в извещении — Не установлен. у каждого нового тендера; в таблице скрыто, в карточке видно. даёт scripts/notion_card.py'}
-    - {name: Нацрежим обязателен, type: select, options: [Да, Нет, Нет данных], source: 'решение владельца 31.10.2026; conditions.national_regime.mandatory в tender.json: true → Да, false → Нет; null, нет поля или national_regime строкой (старый формат) → Нет данных. даёт scripts/notion_card.py'}
-    - {name: 'Нацрежим: подробно', type: rich_text, source: 'строка Фатимы (мера: запрет / ограничение / преимущество, ПП; national_regime объектом {mandatory, measure, basis, confirmation, note} → читаемый текст «Обязателен: … — мера: …; основание: …; чем подтверждать: …; примечание: …», сырой словарь не выводить) + «; Очкарик: …» или страна / реестровая запись товара из цены.md; нет — «нет данных». даёт scripts/notion_card.py'}
+    - {name: Нацрежим, type: select, options: [Да, Нет], source: 'решение владельца 04.11.2026; conditions.national_regime.mandatory в tender.json: true → Да, false → Нет; нет поля / null / строка — по мере (запрет, ограничение → Да; преимущество, не установлен → Нет); неясно — пусто, не выдумывать', table: hidden, card: shown}
+    - {name: Реестр, type: rich_text, source: 'решение владельца 04.11.2026; номер ГИСП (РПП), евразийского реестра или СТ-1 из «Расчёта рентабельности» tender.md и цены.md; нет номера — пусто', table: hidden, card: shown}
+    - {name: 'Нацрежим (старое)', type: select, note: 'старое поле, не удалять без команды; скрыто в таблице и карточке; не заполняется'}
+    - {name: 'Нацрежим обязателен (старое)', type: select, note: 'старое поле, не удалять без команды; скрыто в таблице и карточке; не заполняется'}
+    - {name: 'Нацрежим: подробно (старое)', type: rich_text, note: 'старое поле, не удалять без команды; скрыто в таблице и карточке; не заполняется'}
     - {name: Чистая прибыль, type: formula, source: 'формула от «Прибыль» (см. profit_formula); не заполняется, считается сама'}
     - {name: Дней до подачи, type: formula, source: 'формула от «Подача до» (см. days_left_formula); не заполняется, считается сама'}
   profit_formula: 'if(empty(prop("Прибыль")), "", style(replaceAll(replaceAll(replaceAll(format(prop("Прибыль")), "([0-9])([0-9]{3})([.]|$)", "$1 $2$3"), "([0-9])([0-9]{3}) ", "$1 $2 "), "[.]", ",") + " ₽", "b", "green", "green_background"))'
@@ -160,9 +162,9 @@ notion_layout:                                   # id страниц, баз и 
     city_slug: {Новосибирск: novosibirsk, Москва: moscow, Санкт-Петербург: spb, Томск: tomsk, Барнаул: barnaul, Кемерово: kemerovo}
     address: 'только «г. Город, ул. Улица, дом» — без названия компании, индекса, телефона, этажа, офиса, «(с подъёмом)» и примечаний'
     example: 'https://2gis.ru/novosibirsk/geo/141373143574119'   # г. Новосибирск, ул. Николая Островского, 49 к.1
-  page_layout_header: [Номер тендера, Полная цена, Чистая прибыль, Расходы, Количество поставок, Откуда забирать, '2ГИС: откуда', Куда везти, '2ГИС: куда', Город, Категория, Подача до, Предмет, Ссылка, Обеспечение, Нацрежим, Нацрежим обязателен, 'Нацрежим: подробно']
-  page_layout_hidden: [Прибыль]                  # в шапке скрыта (visibility: hide), в базе остаётся (в таблице тоже скрыта — см. view)
-  page_layout: {main: [{type: cover}, {type: title}, {type: properties, properties: [{property: Номер тендера}, {property: Полная цена}, {property: Чистая прибыль}, {property: Расходы}, {property: Количество поставок}, {property: Откуда забирать}, {property: '2ГИС: откуда', visibility: hide_if_empty}, {property: Куда везти}, {property: '2ГИС: куда', visibility: hide_if_empty}, {property: Город}, {property: Категория}, {property: Подача до}, {property: Предмет}, {property: Ссылка}, {property: Прибыль, visibility: hide}, {property: Дней до подачи, visibility: hide_if_empty}, {property: Обеспечение}, {property: Нацрежим}, {property: Нацрежим обязателен}, {property: 'Нацрежим: подробно'}, {property: Статус, visibility: hide_if_empty}]}, {type: editor}, {type: discussions}]}
+  page_layout_header: [Номер тендера, Полная цена, Чистая прибыль, Расходы, Количество поставок, Откуда забирать, '2ГИС: откуда', Куда везти, '2ГИС: куда', Город, Категория, Подача до, Предмет, Ссылка, Обеспечение, Нацрежим, Реестр]
+  page_layout_hidden: [Прибыль, 'Нацрежим (старое)', 'Нацрежим обязателен (старое)', 'Нацрежим: подробно (старое)']                  # в шапке скрыта (visibility: hide), в базе остаётся (в таблице тоже скрыта — см. view)
+  page_layout: {main: [{type: cover}, {type: title}, {type: properties, properties: [{property: Номер тендера}, {property: Полная цена}, {property: Чистая прибыль}, {property: Расходы}, {property: Количество поставок}, {property: Откуда забирать}, {property: '2ГИС: откуда', visibility: hide_if_empty}, {property: Куда везти}, {property: '2ГИС: куда', visibility: hide_if_empty}, {property: Город}, {property: Категория}, {property: Подача до}, {property: Предмет}, {property: Ссылка}, {property: Прибыль, visibility: hide}, {property: Дней до подачи, visibility: hide_if_empty}, {property: Обеспечение}, {property: Нацрежим}, {property: Реестр}, {property: Статус, visibility: hide_if_empty}, {property: 'Нацрежим (старое)', visibility: hide}, {property: 'Нацрежим обязателен (старое)', visibility: hide}, {property: 'Нацрежим: подробно (старое)', visibility: hide}]}, {type: editor}, {type: discussions}]}
   ddl: |                                         # в новой базе заголовок по умолчанию переименовать в «Товар» (RENAME COLUMN "<имя заголовка>" TO "Товар")
     ADD COLUMN "Полная цена" NUMBER FORMAT 'ruble'; ADD COLUMN "Прибыль" NUMBER FORMAT 'ruble'; ADD COLUMN "Расходы" NUMBER FORMAT 'ruble';
     ADD COLUMN "Город" SELECT('Новосибирск':blue); ADD COLUMN "Категория" SELECT('В городе':green, 'Загород':orange, 'С ограничениями':red);
@@ -173,9 +175,8 @@ notion_layout:                                   # id страниц, баз и 
     ADD COLUMN "Дней до подачи" FORMULA('if(empty(prop("Подача до")), empty(), dateBetween(prop("Подача до"), now(), "days"))');
     ADD COLUMN "Номер тендера" RICH_TEXT COMMENT 'Регистрационный номер закупки (ключ дедупликации)';
     ADD COLUMN "Обеспечение" RICH_TEXT COMMENT 'Обеспечение заявки, контракта и гарантийных обязательств';
-    ADD COLUMN "Нацрежим" SELECT('Соблюдается':green, 'Не соблюдается':red, 'Не подтверждено':yellow, 'Не установлен':gray) COMMENT 'Нацрежим (ст. 14 44-ФЗ, ПП РФ № 1875): соблюдается ли товаром лучшего варианта';
-    ADD COLUMN "Нацрежим: подробно" RICH_TEXT COMMENT 'Мера (запрет, ограничение, преимущество), ПП, реестровая запись или страна товара';
-    ADD COLUMN "Нацрежим обязателен" SELECT('Да':red, 'Нет':green, 'Нет данных':gray) COMMENT 'Обязателен ли нацрежим по извещению (conditions.national_regime.mandatory): true — Да, false — Нет, иначе — Нет данных'
+    ADD COLUMN "Нацрежим" SELECT('Да':red, 'Нет':green) COMMENT 'Да — нацрежим в тендере обязателен (conditions.national_regime.mandatory)';
+    ADD COLUMN "Реестр" RICH_TEXT COMMENT 'Номер реестровой записи ГИСП, евразийского реестра или сертификата СТ-1'
   card_sections: [Главное, 'Особые условия (+ Особые пометки)', Сроки, Что поставляем, Где купить, Расчёт рентабельности, Заказчик и закупка]
   card_highlights: 'в начале «Главное» — зелёный callout (color green_bg, 💰) с жирной строкой «Чистая прибыль: <сумма> ₽»; в строке «Прибыль» сумма жирно на зелёной подложке. рядом с адресами в «Главное» (откуда, куда) и «Где купить» (каждый поставщик) — ссылка «📍 2ГИС». в Notion жирный хранится как <b>…</b>, не **…**: перед правкой страницы — fetch и брать текст как есть'
 
