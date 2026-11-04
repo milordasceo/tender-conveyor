@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Загрузчик документов тендеров из папки «Сток» в «Бланки».
 
+Каждый N-й успешно перенесённый тендер кладётся в «DSH/Бланки»
+(по умолчанию N=5). Сток внутри DSH не читается и не пишется.
+
 Требования: Python 3.10+, пакет requests. Опционально PyYAML для config.yaml / .yml.
 
 Использование:
@@ -40,6 +43,8 @@ except Exception:
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_NAME = "config.json"
+# счётчик успешно перенесённых тендеров — рядом с набором, не на Диске
+DEFAULT_DSH_COUNTER = SCRIPT_DIR.parent / "state" / "dsh_counter.json"
 STATUS_FILENAME = "docs_status.json"
 TENDER_JSON = "tender.json"
 TENDER_MD = "tender.md"
@@ -181,6 +186,10 @@ class Config:
     lock_file: Path = SCRIPT_DIR / "stock_docs_fetcher.lock"
     verify_ssl: bool = True
     ssl_fallback_hosts: tuple[str, ...] = ("zakupki.gov.ru",)
+    # куда класть каждый N-й успешно перенесённый тендер; every_n=0 выключает
+    dsh_blanks_dir: Path = SCRIPT_DIR.parent / "DSH" / "Бланки"
+    every_n: int = 5
+    dsh_counter_file: Path = DEFAULT_DSH_COUNTER
 
     @property
     def max_file_bytes(self) -> int:
@@ -297,10 +306,24 @@ def load_config(path: Path) -> Config:
     log_file = data.get("log_file") or "stock_docs_fetcher.log"
     lock_file = data.get("lock_file") or "stock_docs_fetcher.lock"
     ua = data.get("user_agent") or DEFAULT_USER_AGENT
+    blanks_dir = resolve_path(str(blanks), cfg_dir)
+    every_n = _as_int(data, "every_n", 5)
+    if every_n < 0:
+        raise ConfigError("every_n не может быть отрицательным (0 = выключено)")
+    dsh_raw = data.get("dsh_blanks_dir")
+    if dsh_raw is None or str(dsh_raw).strip() == "":
+        dsh_blanks_dir = blanks_dir.parent / "DSH" / "Бланки"
+    else:
+        dsh_blanks_dir = resolve_path(str(dsh_raw), cfg_dir)
+    counter_raw = data.get("dsh_counter_file")
+    if counter_raw is None or str(counter_raw).strip() == "":
+        dsh_counter_file = DEFAULT_DSH_COUNTER
+    else:
+        dsh_counter_file = resolve_path(str(counter_raw), cfg_dir)
 
     return Config(
         stock_dir=resolve_path(str(stock), cfg_dir),
-        blanks_dir=resolve_path(str(blanks), cfg_dir),
+        blanks_dir=blanks_dir,
         scan_interval_sec=_as_float(data, "scan_interval_sec", 60.0),
         download_pause_sec=_as_float(data, "download_pause_sec", 3.0),
         request_timeout_sec=_as_float(data, "request_timeout_sec", 60.0),
@@ -318,6 +341,9 @@ def load_config(path: Path) -> Config:
         ssl_fallback_hosts=tuple(
             str(h).lower().strip() for h in (data.get("ssl_fallback_hosts") or ["zakupki.gov.ru"]) if str(h).strip()
         ),
+        dsh_blanks_dir=dsh_blanks_dir,
+        every_n=every_n,
+        dsh_counter_file=dsh_counter_file,
     )
 
 
@@ -652,6 +678,51 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def atomic_write_json_durable(path: Path, payload: dict[str, Any]) -> None:
+    """Атомарная запись: временный файл, fsync, затем replace. Старый файл остаётся, пока замена не прошла."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    data = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.write(data)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def is_nth_success(processed_before: int, every_n: int) -> bool:
+    """True, если следующий успешный перенос — каждый N-й (5, 10, 15… при N=5). N<=0 выключено."""
+    if every_n <= 0:
+        return False
+    return (processed_before + 1) % every_n == 0
+
+
+class RouteCounter:
+    """Сколько тендеров уже успешно перенесено. Файл не сбрасывается между запусками."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def processed(self) -> int:
+        if not self.path.is_file():
+            return 0
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8-sig"))
+            if not isinstance(data, dict):
+                raise ValueError("не объект")
+            count = int(data.get("processed", 0))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            LOGGER.warning("Не удалось прочитать счётчик %s (%s), считаю с нуля", self.path, exc)
+            return 0
+        if count < 0:
+            LOGGER.warning("В счётчике %s отрицательное число, считаю с нуля", self.path)
+            return 0
+        return count
+
+    def commit(self, processed: int) -> None:
+        atomic_write_json_durable(self.path, {"processed": processed})
+
+
 def load_status(folder: Path) -> dict[str, Any] | None:
     path = folder / STATUS_FILENAME
     if not path.is_file():
@@ -814,7 +885,19 @@ class Fetcher:
         self._last_empty_stock_log: float | None = None
         self._need_download_pause = False
         self._title: dict[str, str] = {}
-        self._stats = {"moved": 0, "files": 0, "errors": 0, "failed": 0}
+        self._stats = {"moved": 0, "moved_dsh": 0, "files": 0, "errors": 0, "failed": 0}
+        self._route = RouteCounter(cfg.dsh_counter_file)
+        self._dsh_missing_warned = False
+        LOGGER.info(
+            "Назначение: Бланки=%s, DSH/Бланки=%s, каждый_n=%s, уже обработано=%s, счётчик=%s",
+            cfg.blanks_dir,
+            cfg.dsh_blanks_dir,
+            cfg.every_n,
+            self._route.processed(),
+            cfg.dsh_counter_file,
+        )
+        if cfg.every_n > 0 and not cfg.dsh_blanks_dir.is_dir():
+            self._warn_dsh_missing()
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -837,9 +920,11 @@ class Fetcher:
 
     def run_loop(self) -> None:
         LOGGER.info(
-            "Запуск цикла: Сток=%s Бланки=%s интервал=%s с",
+            "Запуск цикла: Сток=%s Бланки=%s DSH/Бланки=%s каждый_n=%s интервал=%s с",
             self.cfg.stock_dir,
             self.cfg.blanks_dir,
+            self.cfg.dsh_blanks_dir,
+            self.cfg.every_n if self.cfg.every_n > 0 else "0 (выключено)",
             self.cfg.scan_interval_sec,
         )
         while True:
@@ -884,7 +969,7 @@ class Fetcher:
         if announce_idle:
             console_line(f"В Стоке папок: {len(entries)}")
         processed = 0
-        self._stats = {"moved": 0, "files": 0, "errors": 0, "failed": 0}
+        self._stats = {"moved": 0, "moved_dsh": 0, "files": 0, "errors": 0, "failed": 0}
         self._pos_total = len(entries)
         for pos, folder in enumerate(entries, 1):
             self._pos = pos
@@ -909,7 +994,9 @@ class Fetcher:
             except OSError:
                 left = -1
             console_line(
-                f"=== ИТОГ прохода: обработано тендеров {processed}, перенесено в Бланки {st['moved']}, "
+                f"=== ИТОГ прохода: обработано тендеров {processed}, "
+                f"перенесено в Бланки {st['moved'] - st['moved_dsh']}, "
+                f"в DSH/Бланки {st['moved_dsh']}, "
                 f"скачано файлов {st['files']}, ошибок скачивания {st['errors']}, провалено {st['failed']}; "
                 f"осталось в Стоке {left if left >= 0 else '?'} ==="
             )
@@ -917,11 +1004,10 @@ class Fetcher:
 
     def process_folder(self, folder: Path) -> bool:
         name = folder.name
-        dest = self.cfg.blanks_dir / name
         prev = load_status(folder)
-
-        if dest.exists():
-            self._handle_exists_in_blanks(folder, prev)
+        where = self._already_delivered(name)
+        if where:
+            self._handle_exists_in_blanks(folder, prev, where)
             return True
 
         if prev and prev.get("state") == "failed":
@@ -962,7 +1048,45 @@ class Fetcher:
 
         return self._attempt_downloads(folder, status)
 
-    def _handle_exists_in_blanks(self, folder: Path, prev: dict[str, Any] | None) -> None:
+    def _already_delivered(self, name: str) -> str | None:
+        """Папка с тем же номером уже лежит в основных Бланках или в DSH/Бланки. Сток DSH не смотрим."""
+        if (self.cfg.blanks_dir / name).exists():
+            return "Бланках"
+        dsh = self.cfg.dsh_blanks_dir
+        if dsh.is_dir() and (dsh / name).exists():
+            return "DSH/Бланки"
+        return None
+
+    def _warn_dsh_missing(self) -> None:
+        if self._dsh_missing_warned:
+            return
+        self._dsh_missing_warned = True
+        msg = (
+            f"Папка DSH/Бланки не найдена: {self.cfg.dsh_blanks_dir}. "
+            f"Каждый {self.cfg.every_n}-й тендер кладу в основные Бланки, пока эта папка не появится."
+        )
+        LOGGER.warning("%s", msg)
+        CONSOLE.info(msg)
+
+    def _destination(self) -> tuple[Path, str, bool]:
+        """Куда класть следующий успешный тендер: каталог, подпись для консоли, это слот DSH."""
+        processed = self._route.processed()
+        if not is_nth_success(processed, self.cfg.every_n):
+            return self.cfg.blanks_dir, "Бланки", False
+        dsh = self.cfg.dsh_blanks_dir
+        if dsh.is_dir():
+            self._dsh_missing_warned = False
+            label = f"DSH/Бланки (каждый {self.cfg.every_n}-й)"
+            return dsh, label, True
+        self._warn_dsh_missing()
+        return self.cfg.blanks_dir, "Бланки", False
+
+    def _handle_exists_in_blanks(
+        self,
+        folder: Path,
+        prev: dict[str, Any] | None,
+        where: str = "Бланках",
+    ) -> None:
         name = folder.name
         status = dict(prev) if prev else empty_status(name, self.cfg.max_attempts)
         status["number"] = status.get("number") or name
@@ -980,8 +1104,8 @@ class Fetcher:
         if name not in self._warned_blanks:
             self._warned_blanks.add(name)
             stamp = now_local().strftime("%Y-%m-%d %H:%M:%S")
-            console_line(f"[{stamp}] {name}: пропуск, уже есть в Бланках")
-            LOGGER.warning("%s: папка уже есть в Бланках, не перезаписываю", name)
+            console_line(f"[{stamp}] {name}: пропуск, уже есть в {where}")
+            LOGGER.warning("%s: папка уже есть в %s, не перезаписываю", name, where)
 
     def _write_status(self, folder: Path, status: dict[str, Any]) -> None:
         status["updated_at"] = now_iso()
@@ -991,26 +1115,44 @@ class Fetcher:
         status["state"] = "done"
         status["next_attempt_after"] = None
         self._write_status(folder, status)
-        dest = self.cfg.blanks_dir / folder.name
+        dest_dir, label, to_dsh = self._destination()
+        dest = dest_dir / folder.name
+        if dest.exists():
+            where = "DSH/Бланки" if to_dsh else "Бланках"
+            self._handle_exists_in_blanks(folder, status, where)
+            return True
         try:
             move_folder(folder, dest)
         except FileExistsError:
-            self._handle_exists_in_blanks(folder, status)
+            where = "DSH/Бланки" if to_dsh else "Бланках"
+            self._handle_exists_in_blanks(folder, status, where)
             return True
         except OSError as exc:
-            LOGGER.error("%s: не удалось перенести в Бланки: %s", folder.name, exc)
+            LOGGER.error("%s: не удалось перенести → %s: %s", folder.name, label, exc)
             stamp = now_local().strftime("%Y-%m-%d %H:%M:%S")
             ok = sum(1 for rec in status["documents"] if rec.get("status") == "ok")
             total = len(status["documents"])
             console_line(
-                f"[{stamp}] {folder.name}: {ok}/{total} ok, ошибка переноса в Бланки"
+                f"[{stamp}] {folder.name}: {ok}/{total} ok, ошибка переноса → {label}"
             )
             return True
+        processed_before = self._route.processed()
+        try:
+            self._route.commit(processed_before + 1)
+        except OSError as exc:
+            LOGGER.error(
+                "Не удалось записать счётчик %s после переноса %s: %s",
+                self._route.path,
+                folder.name,
+                exc,
+            )
         stamp = now_local().strftime("%Y-%m-%d %H:%M:%S")
         total = len(status["documents"])
-        console_line(f"[{stamp}] {folder.name}: {total}/{total} ok -> Бланки")
+        console_line(f"[{stamp}] {folder.name}: {total}/{total} ok → {label}")
         self._stats["moved"] = self._stats.get("moved", 0) + 1
-        LOGGER.info("%s: перенесён в %s", folder.name, dest)
+        if to_dsh:
+            self._stats["moved_dsh"] = self._stats.get("moved_dsh", 0) + 1
+        LOGGER.info("%s: перенесён → %s (%s)", folder.name, label, dest)
         return True
 
     def _attempt_downloads(self, folder: Path, status: dict[str, Any]) -> bool:

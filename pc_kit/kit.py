@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 HERE = Path(__file__).resolve().parent
 SETTINGS = HERE / "settings.ini"
@@ -37,6 +37,14 @@ def split(v):
     return [x.strip() for x in (v or "").replace(";", ",").split(",") if x.strip()]
 
 
+def sibling_dsh_blanks(blanks: str) -> str:
+    """Родитель основных «Бланки» / DSH / Бланки. Буква диска Windows не ломает путь на любой ОС."""
+    raw = blanks.strip().strip('"')
+    if re.match(r"^[A-Za-z]:[\\/]", raw) or "\\" in raw:
+        return str(PureWindowsPath(raw).parent / "DSH" / "Бланки")
+    return str(Path(raw).parent / "DSH" / "Бланки")
+
+
 def load():
     if not SETTINGS.exists():
         die(f"нет файла {SETTINGS}")
@@ -47,6 +55,8 @@ def load():
         s = {
             "stock": cp.get("папки", "сток").strip().strip('"'),
             "blanks": cp.get("папки", "бланки").strip().strip('"'),
+            "blanks_dsh": cp.get("папки", "бланки_dsh", fallback="").strip().strip('"'),
+            "every_n": int((cp.get("папки", "каждый_n", fallback="5") or "5").strip() or "5"),
             "regions": [int(x) for x in split(cp.get("поиск", "регион"))],
             "cities": split(cp.get("поиск", "город", fallback="")),
             "keywords": split(cp.get("поиск", "ключевые_слова", fallback="")),
@@ -82,6 +92,10 @@ def load():
         die("регион, законы и виды не должны быть пустыми")
     if s["min"] > s["max"] or s["d_from"] > s["d_to"]:
         die("«от» больше «до» в суммах или сроках")
+    if s["every_n"] < 0:
+        die("каждый_n не может быть отрицательным (0 = выключено)")
+    if not s["blanks_dsh"]:
+        s["blanks_dsh"] = sibling_dsh_blanks(s["blanks"])
     s["sources"] = sources
     return s
 
@@ -120,6 +134,9 @@ def write_configs(s):
         + yaml.safe_dump(scanner_cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
     fetcher_cfg = {
         "stock_dir": s["stock"], "blanks_dir": s["blanks"],
+        "dsh_blanks_dir": s["blanks_dsh"],
+        "every_n": s["every_n"],
+        "dsh_counter_file": str(STATE_DIR / "dsh_counter.json"),
         "scan_interval_sec": s["fetch_interval"], "download_pause_sec": 3,
         "request_timeout_sec": 60, "http_retries": 3, "retry_backoff_sec": 5,
         "max_file_size_mb": 200, "retry_delay_min": 30, "max_attempts": 5,
@@ -199,6 +216,11 @@ def cmd_fetch(extra):
     write_configs(s)
     check_dir(s["stock"], "Сток")
     check_dir(s["blanks"], "Бланки")
+    if s["every_n"] > 0 and not Path(s["blanks_dsh"]).is_dir():
+        say(
+            f"Внимание: папка DSH/Бланки не найдена ({s['blanks_dsh']}). "
+            f"Каждый {s['every_n']}-й тендер пойдёт в основные Бланки."
+        )
     args = [sys.executable, str(FETCHER_DIR / "stock_docs_fetcher.py"), "--config", str(FETCHER_DIR / "config.json")] + extra
     return subprocess.run(args, cwd=FETCHER_DIR, env=env()).returncode
 
@@ -263,10 +285,17 @@ def tail(path, n=15):
 def cmd_status():
     s = load()
     print("== Папки ==")
-    for name, p in (("Сток", s["stock"]), ("Бланки", s["blanks"])):
+    folders = [("Сток", s["stock"]), ("Бланки", s["blanks"]), ("DSH/Бланки", s["blanks_dsh"])]
+    for name, p in folders:
         ok = Path(p).is_dir()
         cnt = sum(1 for x in Path(p).iterdir() if x.is_dir()) if ok else 0
-        print(f"  {name}: {p} -> " + (f"есть, папок тендеров: {cnt}" if ok else "НЕ НАЙДЕНА"))
+        if name == "DSH/Бланки" and s["every_n"] <= 0:
+            print(f"  {name}: выключено (каждый_n=0), путь {p}")
+            continue
+        extra = ""
+        if name == "DSH/Бланки" and not ok:
+            extra = f" — каждый {s['every_n']}-й пойдёт в основные Бланки"
+        print(f"  {name}: {p} -> " + (f"есть, папок тендеров: {cnt}" if ok else "НЕ НАЙДЕНА" + extra))
     if os.name == "nt":
         print("== Задачи в Планировщике ==")
         for t in (TASK_SCAN, TASK_SCAN_REPEAT, TASK_FETCH):
