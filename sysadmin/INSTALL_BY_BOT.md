@@ -14,9 +14,9 @@
 
 ## 1. Прочитать манифест
 
-Прочитать `sysadmin/bot.yaml`, `sysadmin/bot/prompt.md`, `sysadmin/bot/routine_check_folder_prompt.md`, `sysadmin/bot/routine_evening_report_prompt.md`, `sysadmin/README.md`, `sysadmin/examples/0151100007126000034/card.md`.
+Прочитать `sysadmin/bot.yaml`, `sysadmin/bot/prompt.md`, `sysadmin/bot/routine_check_folder_prompt.md`, `sysadmin/bot/routine_morning_report_prompt.md`, `sysadmin/README.md`, `sysadmin/examples/0151100007126000034/card.md`.
 
-КТ: известны имя, промт, плейсхолдеры `<id Кузнеца>` и `<id Тэндер Мэна>`, две рутины (перенос каждые 30 минут, вечерний отчёт в 21:00, обе Asia/Novosibirsk), структура Notion (`notion_layout`), шаги владельца.
+КТ: известны имя, промт, плейсхолдеры `<id Кузнеца>` и `<id Тэндер Мэна>`, рутины (перенос каждые 30 минут, утренний отчёт в 08:30, все Asia/Novosibirsk), структура Notion (`notion_layout`), шаги владельца.
 
 ## 2. Создать бота
 
@@ -77,7 +77,7 @@ rclone lsf --dirs-only 'gosplan:Госзакупки/К рассмотрению
 N=$(rclone lsf --dirs-only 'gosplan:Госзакупки/К рассмотрению' | head -1 | tr -d /)
 [ -n "$N" ] && rclone copy "gosplan:Госзакупки/К рассмотрению/$N" "/tmp/sysadmin_check/$N" --include 'tender.*' --include 'цены.md' \
   && python3 /home/box/sysadmin/scripts/notion_card.py "/tmp/sysadmin_check/$N" --summary
-TZ=Asia/Novosibirsk date -d '-9 hours' +%F                 # дата начала текущего дня цели
+TZ=Asia/Novosibirsk date -d '-8 hours' +%F                 # дата начала текущего дня цели
 ```
 
 - нет `gosplan:` или 401 / `invalid_grant` — стоп, владельцу текст `owner_steps.rclone_ready`;
@@ -112,7 +112,7 @@ TZ=Asia/Novosibirsk date -d '-9 hours' +%F                 # дата начал
 Обе создать включёнными, промт — весь файл, дословно:
 
 1. «Проверка папки «К рассмотрению»»: `CRON_TZ=Asia/Novosibirsk 0,30 * * * *` (каждые 30 минут, круглосуточно), время гибкое ±15 минут, промт — `sysadmin/bot/routine_check_folder_prompt.md`.
-2. «Вечерний отчёт Тэндер Мэну»: `CRON_TZ=Asia/Novosibirsk 0 21 * * *` (каждый день в 21:00), время гибкое: раньше 0, позже до 10 минут, промт — `sysadmin/bot/routine_evening_report_prompt.md`.
+2. «Утренний отчёт Тэндер Мэну»: `CRON_TZ=Asia/Novosibirsk 30 8 * * *` (каждый день в 08:30, после «Сроки заявок в CRM»), время гибкое: раньше 0, позже до 10 минут, промт — `sysadmin/bot/routine_morning_report_prompt.md`.
 
 Включать после `first_run.preconditions`. Прежний Сисадмин ещё работает — создать, но не включать, пока владелец не подтвердит остановку.
 
@@ -128,7 +128,7 @@ TZ=Asia/Novosibirsk date -d '-9 hours' +%F                 # дата начал
 - Notion: страница «К рассмотрению» и база «Тендеры» найдены или созданы, свойства и раскладка сверены (id не писать);
 - папка «CRM» найдена или создана; тестовый перенос: пройден и папка удалена / пропущен без разрешения;
 - тестовая страница: создана и удалена / пропущена без разрешения;
-- рутины «Проверка папки «К рассмотрению»» (каждые 30 минут) и «Вечерний отчёт Тэндер Мэну» (21:00), Asia/Novosibirsk: включены.
+- рутины «Проверка папки «К рассмотрению»» (каждые 30 минут) и «Утренний отчёт Тэндер Мэну» (08:30), Asia/Novosibirsk: включены.
 
 ## 11. Последний шаг установки: отчёт Тэндер Мэну о готовности
 
