@@ -2,7 +2,9 @@
 
 Для человека. Бот-установщик идёт по `INSTALL_BY_BOT.md` и `bot.yaml`.
 
-Новый бокс Grok Bot. Цель: сканер в `/home/box/gosplan/scripts`, окружение в `/home/box/gosplan/.venv`, rclone-приёмник `gosplan:` на Google Drive с папкой «Госзакупки».
+С 04.11.2026 сканер и загрузчик работают на Windows-ПК владельца через `pc_kit/` (см. `pc_kit/README.md` и корневой `README.md`, шаг 7.3 b). Текст ниже — справочный прежний способ: сканер на боксе, remote `gosplan:`, утренний скан и добор очереди. Без явной команды владельца его не выполнять.
+
+Новый бокс Grok Bot, прежний способ. Цель той установки: сканер в `/home/box/gosplan/scripts`, окружение в `/home/box/gosplan/.venv`, rclone-приёмник `gosplan:` на Google Drive с папкой «Госзакупки».
 
 ## 1. Бот
 
