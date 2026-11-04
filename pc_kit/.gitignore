@@ -1,0 +1,6 @@
+scanner/config.yaml
+fetcher/config.json
+state/
+logs/
+tenders/
+__pycache__/
