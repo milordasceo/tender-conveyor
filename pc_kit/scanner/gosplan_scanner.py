@@ -297,6 +297,21 @@ def keyword_ok(text, keywords, require_all):
     return len(hits) == len(keywords) if require_all else bool(hits)
 
 
+def supply_title_ok(text, f):
+    # только поставка: в названии обязателен фрагмент (по умолчанию «поставк»).
+    # стоп-фразы отсекают услуги, работы и аренду, даже если слово поставки есть.
+    # в списке API нет поля «товар/работа/услуга» — решение по названию, не по типу.
+    if not f.get("supply_only"):
+        return True
+    words = [w for w in (f.get("supply_words") or []) if str(w).strip()] or ["поставк"]
+    if not keyword_ok(text, words, False):
+        return False
+    stops = [w for w in (f.get("stop_words") or []) if str(w).strip()]
+    if stops and keyword_ok(text, stops, False):
+        return False
+    return True
+
+
 def deadline_moment(raw):
     # окончание подачи как naive-москва datetime; дата без времени — конец этого дня
     m = parse_moment(raw)
@@ -1418,6 +1433,9 @@ def main(argv=None):
                 continue
             if f.get("keywords") and not keyword_ok(rec["object_info"], f["keywords"], f.get("keywords_all", False)):
                 log(tender_line(pos, rec, "пропуск: нет ключевых слов"))
+                continue
+            if not supply_title_ok(rec.get("object_info"), f):
+                log(tender_line(pos, rec, "пропуск: не поставка"))
                 continue
             # список: город режем в --collect и в --export --city-strict.
             # мягкий --export город не отбрасывает — пометка попадает в tender.json

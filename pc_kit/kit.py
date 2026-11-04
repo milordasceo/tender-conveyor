@@ -51,6 +51,12 @@ def load():
             "cities": split(cp.get("поиск", "город", fallback="")),
             "keywords": split(cp.get("поиск", "ключевые_слова", fallback="")),
             "kw_all": cp.get("поиск", "все_слова", fallback="нет").strip().lower() in ("да", "yes", "1", "true"),
+            "supply_only": cp.get("поиск", "только_поставка", fallback="да").strip().lower() in ("да", "yes", "1", "true"),
+            "supply_words": split(cp.get("поиск", "слова_поставки", fallback="поставк")),
+            "stop_words": split(cp.get(
+                "поиск", "стоп_слова",
+                fallback="оказание услуг, выполнение работ, услуги по, работы по, аренда, ремонт, техническое обслуживание",
+            )),
             "min": int(float(cp.get("поиск", "сумма_от"))),
             "max": int(float(cp.get("поиск", "сумма_до"))),
             "laws": split(cp.get("поиск", "законы")),
@@ -94,6 +100,9 @@ def write_configs(s):
         "purchase_kinds": {k: PURCHASE_KINDS[k] for k in s["kinds"]},
         "filters": {
             "keywords": s["keywords"], "keywords_all": s["kw_all"], "okpd2": [],
+            "supply_only": s["supply_only"],
+            "supply_words": s["supply_words"] or (["поставк"] if s["supply_only"] else []),
+            "stop_words": s["stop_words"],
             "min_budget": s["min"], "max_budget": s["max"],
             "since": "auto", "published_after": None, "published_before": None,
             "regions": s["regions"], "delivery_cities": s["cities"], "stage": 1,
