@@ -1353,8 +1353,8 @@ def main(argv=None):
                 continue
         params = build_params(f, api_filters=True, source=src)
         if args.dry_run:
+            # dry-run тоже делает поиск (только списки), но ничего не пишет и не выгружает
             log(f"[{src}] {base_url}/{src}/purchases?{urllib.parse.urlencode(params, doseq=True)}")
-            continue
         # срыв одного источника не должен терять уже вытянутые записи другого
         try:
             raw = fetch_source(base_url, src, params, api_key, page_size, max_pages, pause_ms, timeout, log)
@@ -1401,7 +1401,11 @@ def main(argv=None):
             time.sleep(pause_ms / 1000.0)
 
     if args.dry_run:
-        print_summary(0, 0, 0)
+        found = len(all_norm)
+        new_n = len(_fresh_candidates(all_norm, reg, f)) if reg is not None else found
+        no_dl = sum(1 for r in all_norm if r.get("deadline_missing"))
+        log(f"dry-run: подходят по сроку {found - no_dl}, без даты в списке {no_dl} (проверяются по карточке при выгрузке)")
+        print_summary(found, new_n, 0)
         return 0
 
     def log_interval():

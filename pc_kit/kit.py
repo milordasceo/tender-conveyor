@@ -140,7 +140,9 @@ def cmd_scan(extra):
     if not dry:
         check_dir(s["stock"], "Сток")
     args = [sys.executable, str(SCANNER_DIR / "gosplan_scanner.py"), "-c", str(SCANNER_DIR / "config.yaml")]
-    args += ["--export", s["stock"]] if not dry else []
+    # в dry-run «Сток» нужен только чтобы сравнить с реестром (новых); запись не идёт
+    if not dry or Path(s["stock"]).is_dir():
+        args += ["--export", s["stock"]]
     args += extra
     log = LOGS_DIR / "scanner.log"
     print(f"Сканер запущен, подробный журнал: {log}")
